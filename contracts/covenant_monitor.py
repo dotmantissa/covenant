@@ -205,6 +205,18 @@ def normalise_citation(value: object) -> str:
     return text.rstrip("/ .,;:")
 
 
+def format_scaled(value: int, scale: int, places: int) -> str:
+    """Render a scaled integer as a decimal string, without touching floats."""
+    sign = "-" if value < 0 else ""
+    magnitude = abs(int(value))
+    whole = magnitude // scale
+    if places <= 0:
+        return f"{sign}{whole}"
+    remainder = magnitude % scale
+    digits = str(remainder * (10**places) // scale).rjust(places, "0")
+    return f"{sign}{whole}.{digits}"
+
+
 def ratio_bp(numerator_milli: int, denominator_milli: int) -> int:
     """The whole numeric test, as plain integer arithmetic."""
     if denominator_milli == 0:
@@ -861,9 +873,10 @@ class CovenantMonitor(gl.Contract):
             "locator": str(figures.get("locator", "")),
             "as_of": str(figures.get("as_of", "")),
             "narrative": (
-                f"Read {numerator_milli / MILLI:g}{unit_note} against "
-                f"{denominator_milli / MILLI:g}{unit_note}, a ratio of "
-                f"{observed_bp / BP_ONE:.4f}x versus a {threshold_bp / BP_ONE:.4f}x test."
+                f"Read {format_scaled(numerator_milli, MILLI, 2)}{unit_note} against "
+                f"{format_scaled(denominator_milli, MILLI, 2)}{unit_note}, a ratio of "
+                f"{format_scaled(observed_bp, BP_ONE, 4)}x versus a "
+                f"{format_scaled(threshold_bp, BP_ONE, 4)}x test."
             ),
         }
 

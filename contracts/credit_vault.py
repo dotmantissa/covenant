@@ -67,6 +67,13 @@ def require(condition: bool, message: str) -> None:
         raise gl.vm.UserError(f"{ERROR_EXPECTED} {message}")
 
 
+def facility_status_for(consequence: str) -> str:
+    """Where a consequence leaves the agreement, money aside."""
+    if consequence == CONSEQUENCE_ACCELERATION:
+        return FACILITY_ACCELERATING
+    return FACILITY_DRAW_STOPPED
+
+
 def interest_for(drawn_atto: int, rate_bp: int, seconds: int) -> int:
     """Simple interest on the drawn balance, in integer arithmetic throughout."""
     if drawn_atto <= 0 or rate_bp <= 0 or seconds <= 0:
@@ -167,6 +174,7 @@ class CreditVault(gl.Contract):
         key = facility_id.strip()
 
         if key not in self.positions:
+            offside = str(facility["status"]) != FACILITY_ACTIVE
             self.positions[key] = Position(
                 facility_id=key,
                 lender=lender,
@@ -179,8 +187,8 @@ class CreditVault(gl.Contract):
                 current_rate_bp=u256(int(facility["rate_bp"])),
                 step_up_bp=u256(int(facility["step_up_bp"])),
                 interest_accrued_atto=u256(0),
-                draw_frozen=False,
-                accelerated=False,
+                draw_frozen=offside,
+                accelerated=str(facility["status"]) == FACILITY_ACCELERATING,
                 opened_at=now,
                 last_accrual_at=now,
                 last_event_at=now,
@@ -327,7 +335,22 @@ class CreditVault(gl.Contract):
         )
         require(consequence in VALID_CONSEQUENCES, f"unknown consequence {consequence}")
 
-        position = self._position(facility_id)
+        key = facility_id.strip()
+        if key not in self.positions:
+            # No capital has been committed, so there is nothing to freeze or
+            # step. The agreement still moves, and `commit` opens a later
+            # position already frozen so the breach is not escaped by waiting.
+            self._set_facility_status(key, facility_status_for(consequence))
+            return {
+                "facility_id": key,
+                "consequence": consequence,
+                "at": block_now(),
+                "applied": False,
+                "note": "No capital committed yet, so the agreement was marked "
+                "and nothing was moved.",
+            }
+
+        position = self.positions[key]
         now = block_now()
         self._accrue(position, now)
 
@@ -374,6 +397,7 @@ class CreditVault(gl.Contract):
             "facility_id": position.facility_id,
             "consequence": consequence,
             "at": now,
+            "applied": True,
             "rate_bp": int(position.current_rate_bp),
             "draw_frozen": bool(position.draw_frozen),
             "accelerated": bool(position.accelerated),
@@ -391,7 +415,16 @@ class CreditVault(gl.Contract):
             self.monitor != ZERO_ADDRESS and gl.message.sender_address == self.monitor,
             "only the covenant monitor can release a facility",
         )
-        position = self._position(facility_id)
+        key = facility_id.strip()
+        if key not in self.positions:
+            self._set_facility_status(key, FACILITY_ACTIVE)
+            return {
+                "facility_id": key,
+                "released": False,
+                "reason": "no capital committed yet",
+            }
+
+        position = self.positions[key]
         if position.accelerated:
             return {
                 "facility_id": position.facility_id,
