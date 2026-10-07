@@ -17,6 +17,7 @@
     "sweep": "tsx worker/scheduler.ts",
     "check:secrets": "node scripts/check-secrets.mjs",
     "test:node": "tsx --test tests/node/*.test.ts",
+    "test:integration": ".venv/bin/gltest tests/integration/ -v -s",
     "db:verify": "tsx scripts/db-verify.mts",
     "check:privy": "tsx scripts/privy-check.mts"
   },
