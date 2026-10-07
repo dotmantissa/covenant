@@ -1,31 +1,36 @@
 import { handleRouteError, jsonResponse } from "@/lib/api";
-import { requireActor } from "@/lib/auth";
+import { optionalActor, requireActor } from "@/lib/auth";
 import { alerts, db, facilities } from "@/lib/db";
 import { desc, eq, or, sql } from "drizzle-orm";
 
 export async function GET(request: Request) {
   try {
-    const actor = await requireActor(request);
-    const addr = actor.address.toLowerCase();
+    const actor = await optionalActor(request);
+    const addr = actor ? actor.address.toLowerCase() : "";
     const url = new URL(request.url);
     const unreadOnly = url.searchParams.get("unread") === "true";
 
-    // Find facilities belonging to this actor
-    const userFacilities = await db()
-      .select({ facilityId: facilities.facilityId })
-      .from(facilities)
-      .where(
-        or(
-          eq(sql`lower(${facilities.lenderAddress})`, addr),
-          eq(sql`lower(${facilities.borrowerAddress})`, addr),
-        ),
-      );
+    let facilityIds: string[] = [];
 
-    if (userFacilities.length === 0) {
-      return jsonResponse({ alerts: [] });
+    if (addr) {
+      // Find facilities belonging to this actor
+      const userFacilities = await db()
+        .select({ facilityId: facilities.facilityId })
+        .from(facilities)
+        .where(
+          or(
+            eq(sql`lower(${facilities.lenderAddress})`, addr),
+            eq(sql`lower(${facilities.borrowerAddress})`, addr),
+          ),
+        );
+      facilityIds = userFacilities.map((f) => f.facilityId);
+    } else {
+      // Unauthenticated: show alerts across all active facilities
+      const allFacilities = await db()
+        .select({ facilityId: facilities.facilityId })
+        .from(facilities);
+      facilityIds = allFacilities.map((f) => f.facilityId);
     }
-
-    const facilityIds = userFacilities.map((f) => f.facilityId);
 
     let query = db()
       .select()

@@ -1,11 +1,11 @@
 import { handleRouteError, jsonResponse } from "@/lib/api";
-import { requireActor } from "@/lib/auth";
+import { optionalActor } from "@/lib/auth";
 import { covenantTests, db } from "@/lib/db";
 import { and, desc, eq } from "drizzle-orm";
 
 export async function GET(request: Request) {
   try {
-    await requireActor(request);
+    await optionalActor(request);
     const url = new URL(request.url);
     const facilityId = url.searchParams.get("facilityId");
     const covenantIndexStr = url.searchParams.get("covenantIndex");

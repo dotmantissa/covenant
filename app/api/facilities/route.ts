@@ -1,5 +1,5 @@
 import { handleRouteError, jsonResponse } from "@/lib/api";
-import { actorsByAddress, requireActor, userByEmail } from "@/lib/auth";
+import { actorsByAddress, optionalActor, requireActor, userByEmail } from "@/lib/auth";
 import { clientFor, addresses, sendWrite } from "@/lib/chain";
 import { covenants, db, facilities, positions } from "@/lib/db";
 import { syncFacility } from "@/lib/sync";
@@ -7,15 +7,15 @@ import { desc, eq, or, sql } from "drizzle-orm";
 
 export async function GET(request: Request) {
   try {
-    const actor = await requireActor(request);
+    const actor = await optionalActor(request);
     const url = new URL(request.url);
     const role = url.searchParams.get("role");
-    const showAll = url.searchParams.get("all") === "true";
-    const addr = actor.address.toLowerCase();
+    const showAll = url.searchParams.get("all") === "true" || !actor;
+    const addr = actor ? actor.address.toLowerCase() : "";
 
     const conditions = [];
 
-    if (!showAll) {
+    if (!showAll && addr) {
       if (role === "lender") {
         conditions.push(eq(sql`lower(${facilities.lenderAddress})`, addr));
       } else if (role === "borrower") {

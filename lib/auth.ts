@@ -46,6 +46,18 @@ export async function requireActor(request: Request): Promise<Actor> {
   return { privyDid, email, address, user: row };
 }
 
+/**
+ * Returns the actor if a valid Privy token is provided, or null if unauthenticated.
+ */
+export async function optionalActor(request: Request): Promise<Actor | null> {
+  try {
+    return await requireActor(request);
+  } catch (err) {
+    if (err instanceof NotSignedIn) return null;
+    throw err;
+  }
+}
+
 /** Looks up who an address belongs to, for showing counterparties as people. */
 export async function actorsByAddress(
   addressList: string[],

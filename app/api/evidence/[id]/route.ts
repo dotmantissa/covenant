@@ -1,5 +1,5 @@
 import { handleRouteError, jsonResponse } from "@/lib/api";
-import { requireActor } from "@/lib/auth";
+import { optionalActor } from "@/lib/auth";
 import { covenants, covenantTests, db, facilities } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
 
@@ -9,7 +9,7 @@ type RouteParams = {
 
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    await requireActor(request);
+    await optionalActor(request);
     const { id: idStr } = await params;
     const testId = parseInt(idStr, 10);
 
