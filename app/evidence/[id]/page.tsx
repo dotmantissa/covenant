@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiFetch } from "@/lib/client-api";
 import { formatAddress, formatAtto, formatBp, formatIsoDate } from "@/lib/format";
+import { PageLoading } from "@/components/spinner";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -94,11 +95,7 @@ export default function EvidenceCitationPage({
   }, [ready, authenticated, testIdStr, getAccessToken]);
 
   if (loading) {
-    return (
-      <div className="text-center py-24 font-serif italic text-sm text-[var(--ink-2)]">
-        Retrieving consensus citation audit trail...
-      </div>
-    );
+    return <PageLoading message="Retrieving consensus citation audit trail..." />;
   }
 
   if (!data || error) {

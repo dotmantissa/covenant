@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiFetch } from "@/lib/client-api";
 import { formatAddress, formatAtto, formatBp, formatIsoDate } from "@/lib/format";
+import { PageLoading } from "@/components/spinner";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -305,13 +306,7 @@ export default function FacilityConsolePage({
   };
 
   if (loading && !facility) {
-    return (
-      <div className="text-center py-24 space-y-2">
-        <div className="font-serif italic text-sm text-[var(--ink-2)]">
-          Reading credit facility and on-chain covenants...
-        </div>
-      </div>
-    );
+    return <PageLoading message="Reading credit facility and on-chain covenants..." />;
   }
 
   if (!facility) {

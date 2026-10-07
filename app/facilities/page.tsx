@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiFetch } from "@/lib/client-api";
 import { formatAddress, formatAtto, formatBp } from "@/lib/format";
+import { PageLoading } from "@/components/spinner";
 import {
   AlertTriangle,
   ArrowRight,
@@ -242,10 +243,12 @@ export default function FacilitiesPage() {
         <div className="p-4 rounded border border-[rgba(168,48,30,0.2)] bg-[rgba(168,48,30,0.05)] text-xs text-[var(--breach)]">
           {error}
         </div>
+      ) : loading && facilities.length === 0 ? (
+        <PageLoading message="Reading credit facilities from chain register..." />
       ) : filteredFacilities.length === 0 ? (
         <div className="text-center py-16 space-y-3 border border-dashed border-[var(--rule)] rounded">
           <div className="text-sm font-serif italic text-[var(--ink-2)]">
-            {loading ? "Reading credit facilities from chain register..." : "No credit facilities found matching the selection."}
+            No credit facilities found matching the selection.
           </div>
           {!loading && authenticated && (
             <button

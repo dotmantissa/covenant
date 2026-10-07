@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiFetch } from "@/lib/client-api";
 import { formatAtto, formatBp } from "@/lib/format";
+import { PageLoading } from "@/components/spinner";
 import {
   AlertTriangle,
   ArrowRight,
@@ -241,11 +242,7 @@ function EvidenceListContent() {
 
 export default function EvidencePage() {
   return (
-    <Suspense fallback={
-      <div className="text-center py-24 font-serif italic text-sm text-[var(--ink-2)]">
-        Loading evidence trail...
-      </div>
-    }>
+    <Suspense fallback={<PageLoading message="Loading consensus evidence trail..." />}>
       <EvidenceListContent />
     </Suspense>
   );

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { apiFetch } from "@/lib/client-api";
 import { formatIsoDate } from "@/lib/format";
+import { PageLoading } from "@/components/spinner";
 import {
   ArrowRight,
   Check,
@@ -140,10 +141,12 @@ export default function AlertsPage() {
         <div className="p-4 rounded border border-[rgba(168,48,30,0.2)] bg-[rgba(168,48,30,0.05)] text-xs text-[var(--breach)]">
           {error}
         </div>
+      ) : loading && alerts.length === 0 ? (
+        <PageLoading message="Checking compliance alerts..." />
       ) : alerts.length === 0 ? (
         <div className="text-center py-16 border border-dashed border-[var(--rule)] rounded space-y-2">
           <div className="font-serif italic text-sm text-[var(--ink-2)]">
-            {loading ? "Checking compliance alerts..." : "No compliance alerts on file."}
+            No compliance alerts on file.
           </div>
           <div className="text-xs text-[var(--ink-3)]">
             All credit covenants currently within agreed thresholds.
