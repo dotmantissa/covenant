@@ -387,7 +387,7 @@ export default function FacilityConsolePage({
               </span>
             </div>
             <div className="font-serif text-base text-[var(--ink-2)] italic">
-              {facility.borrowerName} {facility.purpose && `— ${facility.purpose}`}
+              {facility.borrowerName} {facility.purpose && `(${facility.purpose})`}
             </div>
           </div>
 
