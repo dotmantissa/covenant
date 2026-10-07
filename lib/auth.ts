@@ -7,7 +7,7 @@
  * it is never consulted to decide what someone may do. Authority comes from the
  * address, and the contracts check it.
  */
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db, users, type User } from "@/lib/db";
 import { identify, NotSignedIn } from "@/lib/privy";
 import { deriveAddress } from "@/lib/signer";
@@ -68,7 +68,7 @@ export async function actorsByAddress(
   const rows = await db()
     .select()
     .from(users)
-    .where(sql`lower(${users.genlayerAddress}) = any(${wanted})`);
+    .where(inArray(sql`lower(${users.genlayerAddress})`, wanted));
 
   return new Map(rows.map((row) => [row.genlayerAddress.toLowerCase(), row]));
 }
