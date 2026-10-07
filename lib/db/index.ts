@@ -7,6 +7,7 @@
  * written as single statements or as idempotent upserts rather than as
  * multi-statement transactions.
  */
+import "@/lib/net";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { databaseUrl } from "@/lib/env";

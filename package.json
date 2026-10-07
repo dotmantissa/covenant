@@ -11,12 +11,13 @@
     "typecheck": "tsc --noEmit",
     "deploy:contracts": "tsx deploy/deploy.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio",
+    "db:migrate": "NODE_OPTIONS=--network-family-autoselection-attempt-timeout=5000 drizzle-kit migrate",
+    "db:push": "NODE_OPTIONS=--network-family-autoselection-attempt-timeout=5000 drizzle-kit push",
+    "db:studio": "NODE_OPTIONS=--network-family-autoselection-attempt-timeout=5000 drizzle-kit studio",
     "sweep": "tsx worker/scheduler.ts",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "test:node": "tsx --test tests/node/*.test.ts"
+    "test:node": "tsx --test tests/node/*.test.ts",
+    "db:verify": "tsx scripts/db-verify.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.2.0",
