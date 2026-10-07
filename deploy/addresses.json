@@ -1,0 +1,11 @@
+{
+  "network": "studionet",
+  "chainId": 61999,
+  "deployer": "0x8cc1de23F0bf16a59631B260CDEDBDe855b078D5",
+  "deployedAt": "2026-10-07T02:27:27.099Z",
+  "contracts": {
+    "facilityRegistry": "0x535b9510E7946D1106D27766359a136847eB6eFc",
+    "covenantMonitor": "0x4273F7e4CFF3B1cd6069F7ED5f4cb7493889E9aE",
+    "creditVault": "0x80Aa7EfAec29239d38a318293339473FbD2B0855"
+  }
+}
