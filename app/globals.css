@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #ffffff;
+  --paper-2: #f1f5f6;
+  --paper-3: #e6edee;
+  --ink: #003748;
+  --ink-2: rgba(0, 55, 72, 0.66);
+  --ink-3: rgba(0, 55, 72, 0.44);
+  --rule: rgba(0, 55, 72, 0.13);
+  --rule-2: rgba(0, 55, 72, 0.26);
+  --signal: #30c5ca;
+  --signal-ink: #0b6a6e;
+  --breach: #a8301e;
+}
+
+.dark {
+  --paper: #001a23;
+  --paper-2: #00242f;
+  --paper-3: #003748;
+  --ink: #e6eff0;
+  --ink-2: rgba(230, 239, 240, 0.66);
+  --ink-3: rgba(230, 239, 240, 0.42);
+  --rule: rgba(230, 239, 240, 0.14);
+  --rule-2: rgba(48, 197, 202, 0.3);
+  --signal: #30c5ca;
+  --signal-ink: #5fd8dc;
+  --breach: #e8705a;
+}
+
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  min-height: 100vh;
+}
+
+/* Ledger ruled register styling */
+.ledger-rule {
+  border-bottom: 1px solid var(--rule);
+}
+
+.ledger-rule-thick {
+  border-bottom: 2px solid var(--rule-2);
+}
+
+.ledger-row {
+  border-bottom: 1px solid var(--rule);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.ledger-row:hover {
+  border-bottom-color: var(--rule-2);
+  background-color: var(--paper-2);
+}
+
+.tabular-numbers {
+  font-variant-numeric: tabular-nums;
+}

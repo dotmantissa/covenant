@@ -5,6 +5,8 @@
  * GenLayer RPC do not time out prematurely.
  */
 export async function register(): Promise<void> {
-  const { tuneNetworkTimeouts } = await import("@/lib/net");
-  tuneNetworkTimeouts();
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { tuneNetworkTimeouts } = await import("@/lib/net");
+    tuneNetworkTimeouts();
+  }
 }
