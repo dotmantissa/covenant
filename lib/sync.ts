@@ -85,6 +85,23 @@ type RawChainPosition = {
   enforcement_count: number;
 };
 
+let facilityIndex: { registry: string; expires: number; ids: ReadonlySet<string> } | undefined;
+
+/** Scope the read cache to agreements actually registered in this deployment. */
+export async function currentFacilityIds(): Promise<ReadonlySet<string>> {
+  const registry = addresses().facilityRegistry;
+  if (facilityIndex?.registry === registry && facilityIndex.expires > Date.now()) {
+    return facilityIndex.ids;
+  }
+  const ids = await readView<string[]>(registry, "list_facility_ids");
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+    throw new Error("registry returned an invalid facility index");
+  }
+  const indexed = new Set(ids);
+  facilityIndex = { registry, expires: Date.now() + 10_000, ids: indexed };
+  return indexed;
+}
+
 /**
  * Syncs a single facility, its vault position, and its covenants from chain.
  */
@@ -125,6 +142,8 @@ export async function syncFacility(
     .onConflictDoUpdate({
       target: facilities.facilityId,
       set: {
+        lenderAddress: rawFacility.lender.toLowerCase(),
+        borrowerAddress: rawFacility.borrower.toLowerCase(),
         borrowerName: rawFacility.borrower_name,
         purpose: rawFacility.purpose,
         principalAtto: rawFacility.principal_atto,

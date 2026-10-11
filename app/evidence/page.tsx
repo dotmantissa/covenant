@@ -88,6 +88,14 @@ function EvidenceListContent() {
           <p className="text-xs text-[var(--ink-2)]">
             Every finding cites the specific source artifact, extracted figures, and sandboxed calculation verified by consensus.
           </p>
+          <a
+            href="https://github.com/dotmantissa/covenant/blob/main/evidence/REVIEW.md"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block text-xs underline underline-offset-4 text-[var(--ink-2)]"
+          >
+            View settlement and appeal proof
+          </a>
         </div>
 
         <button

@@ -2,7 +2,7 @@ import { handleRouteError, jsonResponse } from "@/lib/api";
 import { actorsByAddress, optionalActor, requireActor, userByEmail } from "@/lib/auth";
 import { clientFor, addresses, sendWrite } from "@/lib/chain";
 import { covenants, db, facilities, positions } from "@/lib/db";
-import { syncFacility } from "@/lib/sync";
+import { currentFacilityIds, syncFacility } from "@/lib/sync";
 import { desc, eq, or, sql } from "drizzle-orm";
 
 export async function GET(request: Request) {
@@ -30,11 +30,12 @@ export async function GET(request: Request) {
       }
     }
 
-    const rows = await db()
+    const activeIds = await currentFacilityIds();
+    const rows = (await db()
       .select()
       .from(facilities)
       .where(conditions.length > 0 ? or(...conditions) : undefined)
-      .orderBy(desc(facilities.syncedAt));
+      .orderBy(desc(facilities.syncedAt))).filter((row) => activeIds.has(row.facilityId));
 
     // Get positions for all these facilities
     const posRows = await db().select().from(positions);

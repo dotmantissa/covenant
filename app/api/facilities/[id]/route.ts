@@ -1,7 +1,7 @@
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { actorsByAddress, optionalActor } from "@/lib/auth";
 import { alerts, covenants, covenantTests, db, facilities, positions } from "@/lib/db";
-import { syncFacility } from "@/lib/sync";
+import { currentFacilityIds, syncFacility } from "@/lib/sync";
 import { desc, eq } from "drizzle-orm";
 
 type RouteParams = {
@@ -12,6 +12,9 @@ export async function GET(request: Request, { params }: RouteParams) {
   try {
     await optionalActor(request);
     const { id: facilityId } = await params;
+    if (!(await currentFacilityIds()).has(facilityId)) {
+      return jsonResponse({ error: "facility not found" }, 404);
+    }
     const url = new URL(request.url);
     const shouldRefresh = url.searchParams.get("refresh") === "true";
 

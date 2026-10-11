@@ -170,7 +170,7 @@ bond payouts, drawdowns, surplus refunds and withdrawals. Account payouts use
 the external native transfer interface; IC emit_transfer cannot deliver to EOAs. Each receiving contract
 rejects stale revisions. Agreement terms and exact borrower consent arrive through authenticated registry messages emitted on finalization; no decision relies on an unfinalized registry read. Draws also require acknowledgement of the monitor’s latest revision, so an accepted clean appeal cannot grant rights before its finalized settlement. The monitor owns the cure clock and restrictions, avoiding
 a dependency on asynchronously updated registry records. The application waits for
-the emitted transaction tree to finalize and succeed before reporting settlement.
+the emitted transaction tree to finalize before reporting settlement. IC receipts must report VM SUCCESS and agreeing consensus; native SEND receipts must confirm credited funds and their finalized parent linkage.
 If a child write fails, anyone can call `CovenantMonitor.sync_enforcement(facility_id)`;
 it retries the latest snapshot without paying a bond twice. Registry `sync_agreement(facility_id)` similarly retries immutable agreement and authorized covenant delivery without resetting cure clocks or admitting drafts.
 
@@ -201,6 +201,7 @@ python3 tests/integration/review_lifecycle.py economics
 python3 tests/integration/review_lifecycle.py breach
 # Publish the correcting disclosure, then independently retest under appeal:
 python3 tests/integration/review_lifecycle.py resolve
+python3 tests/integration/review_lifecycle.py verify
 python3 -m pytest tests/integration -v -s
 ```
 

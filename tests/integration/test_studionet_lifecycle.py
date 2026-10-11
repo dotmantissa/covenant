@@ -40,8 +40,9 @@ def test_review_receipts_include_consensus_children_and_reverts(evidence):
             assert live.get("triggered_by") == evidence["steps"][parent_name]["hash"], name
             assert step["expectedSuccess"], name
         else:
+            assert live.get("result") in (1, 6), name
             assert tx_execution_succeeded(live) == step["expectedSuccess"], name
-        assert live.get("triggered_transactions", []) == step["receipt"].get("triggered_transactions", []), name
+        assert set(live.get("triggered_transactions", [])) == set(step["receipt"].get("triggered_transactions", [])), name
         time.sleep(2)  # respect hosted request limits while rechecking every receipt
         receipt = step["receipt"]
         assert receipt["status_name"] == "FINALIZED", name
@@ -49,6 +50,7 @@ def test_review_receipts_include_consensus_children_and_reverts(evidence):
             assert receipt["value_credited"] is True, name
             assert receipt["triggered_on"] == "finalized", name
         else:
+            assert receipt.get("result") in (1, 6), name
             assert tx_execution_succeeded(receipt) == step["expectedSuccess"], name
         assert step["explorer"].endswith(step["hash"]), name
         for tx_hash in receipt.get("triggered_transactions", []):

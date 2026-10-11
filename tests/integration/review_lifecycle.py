@@ -105,11 +105,15 @@ class ReviewRun:
             save(self.data)  # submission recorded before waiting
         print(label, record["explorer"], flush=True)
         receipt = self.receipt(record["hash"])
-        assert execution_succeeded(receipt) == expect_success, (label, receipt)
+        if receipt.get("type") != 0:
+            assert receipt.get("result") in (1, 6), (label, "consensus did not agree", receipt.get("result_name"))
+        assert execution_succeeded(receipt) == expect_success, (label, receipt.get("status_name"),
+            [{k: leader.get(k) for k in ("execution_result", "error")}
+             for leader in (receipt.get("consensus_data") or {}).get("leader_receipt", [])])
         assert receipt.get("status_name") == "FINALIZED" or receipt["status"] == 7, (label, receipt["status"])
         leaders = (receipt.get("consensus_data") or {}).get("leader_receipt", [])
         record["receipt"] = {k: receipt[k] for k in
-            ("hash", "status", "status_name", "to_address", "data", "triggered_transactions", "leader_only", "execution_mode", "type", "value", "value_credited", "from_address", "triggered_by", "triggered_on") if k in receipt}
+            ("hash", "status", "status_name", "to_address", "data", "triggered_transactions", "leader_only", "execution_mode", "type", "result", "result_name", "value", "value_credited", "from_address", "triggered_by", "triggered_on") if k in receipt}
         record["receipt"]["consensus_data"] = {"leader_receipt": [
             {k: leader[k] for k in ("execution_result", "error", "result", "pending_transactions", "pending_eth_transactions", "vote", "mode") if k in leader}
             for leader in leaders]}
@@ -141,6 +145,38 @@ class ReviewRun:
         self.data["checks"][label] = facts
         save(self.data)
         print("verified", label, json.dumps(facts, default=str), flush=True)
+
+    def verify(self):
+        """Independently refresh public receipt proofs after the complete lifecycle."""
+        assert "final_settlement" in self.data["checks"], "finish lifecycle first"
+        counts = {"contractTransactions": 0, "nativeTransfers": 0}
+        for index, (label, record) in enumerate(self.data["steps"].items(), 1):
+            receipt = self.client.get_transaction(record["hash"])
+            assert receipt["status_name"] == "FINALIZED", label
+            assert receipt.get("leader_only") is False and receipt.get("execution_mode") == "NORMAL", label
+            assert execution_succeeded(receipt) == record["expectedSuccess"], label
+            assert set(receipt.get("triggered_transactions", [])) == set(record["receipt"].get("triggered_transactions", [])), label
+            if receipt.get("type") == 0:
+                parent = label.rsplit("/child/", 1)[0]
+                assert receipt["triggered_by"] == self.data["steps"][parent]["hash"], label
+                counts["nativeTransfers"] += 1
+            else:
+                assert receipt.get("result") in (1, 6), label
+                counts["contractTransactions"] += 1
+            for key in ("type", "result", "result_name", "leader_only", "execution_mode", "value", "value_credited",
+                        "from_address", "to_address", "triggered_by", "triggered_on"):
+                if key in receipt:
+                    record["receipt"][key] = receipt[key]
+            consensus = receipt.get("consensus_data") or {}
+            record["receipt"]["consensus_data"]["votes"] = consensus.get("votes", {})
+            record["receipt"]["consensus_data"]["validators"] = [
+                {key: validator[key] for key in ("execution_result", "vote", "mode") if key in validator}
+                for validator in consensus.get("validators", [])]
+            save(self.data)
+            if index % 10 == 0:
+                print("rechecked", index, "finalized receipts", flush=True)
+            time.sleep(2)
+        self.check("receipts_rechecked", counts)
 
     def deploy(self):
         for key, filename, args in [
@@ -333,7 +369,7 @@ class ReviewRun:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=["deploy", "economics", "breach", "resolve"])
+    parser.add_argument("phase", choices=["deploy", "economics", "breach", "resolve", "verify"])
     args = parser.parse_args()
     run = ReviewRun()
     getattr(run, args.phase)()

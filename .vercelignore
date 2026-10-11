@@ -1,0 +1,16 @@
+.env*
+.git/
+.vercel/
+node_modules/
+.next/
+.venv/
+__pycache__/
+.pytest_cache/
+.gltest_cache/
+artifacts/
+TASKS.md
+TASKS.tmp
+.task-checklist.md
+evidence/*diagnostic.json
+evidence/*preflight.json
+*.log

@@ -14,6 +14,7 @@ describe("assertExecuted", () => {
     const receipt = {
       status: 7,
       statusName: "FINALIZED",
+      result: 6,
       txExecutionResult: 0,
       txExecutionResultName: "SUCCESS",
       consensus_data: {
@@ -137,7 +138,7 @@ describe("emitted settlement", () => {
         hash === root ? [child] : hash === child ? [grandchild] : [],
       waitForTransactionReceipt: async ({ hash }: { hash: string }) => {
         waited.push(hash);
-        return { statusName: "FINALIZED", consensus_data: {
+        return { statusName: "FINALIZED", result: 6, consensus_data: {
           leader_receipt: [{ execution_result: "SUCCESS" }],
         } };
       },
@@ -223,4 +224,12 @@ it("verifies raw SEND ledger when the SDK omits native type and linkage", async 
   } as unknown as import("../../lib/chain").Client;
   await waitForEmittedTransactions(client, parent, "draw");
   assert.equal(rawReads, 1);
+});
+
+
+it("rejects a successful leader when validators did not reach agreement", () => {
+  const receipt = { statusName: "FINALIZED", result: 5, consensus_data: {
+    leader_receipt: [{ execution_result: "SUCCESS" }],
+  } } as unknown as GenLayerTransaction;
+  assert.throws(() => assertExecuted("repay", receipt), /did not reach agreeing consensus/);
 });

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db, facilities, positions, covenants, covenantTests } from "@/lib/db";
+import { currentFacilityIds } from "@/lib/sync";
 import { contractAddresses } from "@/lib/env";
 import { formatAtto } from "@/lib/format";
 import { ArrowRight, FileText, Scale, Zap } from "lucide-react";
@@ -13,15 +14,16 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const addrs = contractAddresses();
 
-  // Load real aggregates from database
-  const allFacilities = await db().select().from(facilities);
-  const allPositions = await db().select().from(positions);
-  const allCovenants = await db().select().from(covenants);
-  const recentTests = await db()
+  // Keep historical cache rows outside the current deployment’s live portfolio.
+  const activeIds = await currentFacilityIds();
+  const allFacilities = (await db().select().from(facilities)).filter((row) => activeIds.has(row.facilityId));
+  const allPositions = (await db().select().from(positions)).filter((row) => activeIds.has(row.facilityId));
+  const allCovenants = (await db().select().from(covenants)).filter((row) => activeIds.has(row.facilityId));
+  const recentTests = (await db()
     .select()
     .from(covenantTests)
     .orderBy(desc(covenantTests.createdAt))
-    .limit(5);
+    .limit(25)).filter((row) => activeIds.has(row.facilityId)).slice(0, 5);
 
   let totalCommittedAtto = 0n;
   let totalDrawnAtto = 0n;
@@ -69,6 +71,14 @@ export default async function HomePage() {
           >
             <span>Inspect Evidence Chain</span>
           </Link>
+          <a
+            href="https://github.com/dotmantissa/covenant/blob/main/evidence/REVIEW.md"
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm underline underline-offset-4 text-[var(--ink-2)] self-center"
+          >
+            View settlement and appeal proof
+          </a>
         </div>
       </section>
 

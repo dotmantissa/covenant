@@ -20,6 +20,7 @@ import * as chains from "genlayer-js/chains";
 import {
   executionResultNumberToName,
   transactionsStatusNumberToName,
+  transactionResultNumberToName,
 } from "genlayer-js/types";
 import type {
   GenLayerChain,
@@ -163,6 +164,10 @@ export function assertExecuted(label: string, receipt: GenLayerTransaction): voi
   }
   if (execution !== "SUCCESS") {
     throw new Error(`${label} reported an unrecognized execution result: ${execution}`);
+  }
+  const consensus = nameOf(receipt.resultName, receipt.result, transactionResultNumberToName);
+  if (consensus !== "AGREE" && consensus !== "MAJORITY_AGREE") {
+    throw new Error(`${label} did not reach agreeing consensus (${consensus || "unknown"})`);
   }
 }
 
