@@ -239,6 +239,23 @@ export async function sendWrite(
 }
 
 
+/** Studio native SENDs have a credited ledger marker instead of VM receipts. */
+export function assertSettlementChild(label: string, receipt: GenLayerTransaction, parent: string): void {
+  if (receipt.type !== 0) {
+    assertExecuted(label, receipt);
+    return;
+  }
+  const native = receipt as GenLayerTransaction & {
+    value_credited?: boolean; triggered_by?: string; triggered_on?: string;
+  };
+  const status = nameOf(receipt.statusName, receipt.status, transactionsStatusNumberToName);
+  if (status !== "FINALIZED" || native.value_credited !== true ||
+      native.triggered_by !== parent || native.triggered_on !== "finalized" ||
+      !receipt.to_address || !receipt.from_address || !(Number(receipt.value) > 0)) {
+    throw new Error(`${label} native transfer settlement cannot be confirmed`);
+  }
+}
+
 /** A finalized parent may have independently failing settlement children. */
 export async function waitForEmittedTransactions(
   client: Client, hash: TransactionHash, label: string, seen = new Set<string>(),
@@ -253,7 +270,13 @@ export async function waitForEmittedTransactions(
       client.waitForTransactionReceipt({ hash: child, status: "FINALIZED" as never,
         interval: 5000, retries: 120 }),
     );
-    assertExecuted(`${label} settlement ${child}`, receipt);
+    // Studio’s simplified/viem-formatted native receipts omit type and linkage.
+    // Read the raw ledger record when no VM consensus receipt is present.
+    const settlement = !receipt.consensus_data
+      ? await withRetry(`${label} native ledger`, async () =>
+          await client.request({ method: "eth_getTransactionByHash", params: [child] }) as unknown as GenLayerTransaction)
+      : receipt;
+    assertSettlementChild(`${label} settlement ${child}`, settlement, hash);
     await waitForEmittedTransactions(client, child, label, seen);
   }
 }

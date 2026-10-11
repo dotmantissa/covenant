@@ -33,12 +33,23 @@ def test_review_receipts_include_consensus_children_and_reverts(evidence):
         assert live["status_name"] == "FINALIZED", name
         assert live.get("leader_only") is False, name
         assert live.get("execution_mode") == "NORMAL", name
-        assert tx_execution_succeeded(live) == step["expectedSuccess"], name
+        if live.get("type") == 0:
+            assert live.get("value_credited") is True, name
+            assert live.get("triggered_on") == "finalized", name
+            parent_name = name.rsplit("/child/", 1)[0]
+            assert live.get("triggered_by") == evidence["steps"][parent_name]["hash"], name
+            assert step["expectedSuccess"], name
+        else:
+            assert tx_execution_succeeded(live) == step["expectedSuccess"], name
         assert live.get("triggered_transactions", []) == step["receipt"].get("triggered_transactions", []), name
         time.sleep(2)  # respect hosted request limits while rechecking every receipt
         receipt = step["receipt"]
         assert receipt["status_name"] == "FINALIZED", name
-        assert tx_execution_succeeded(receipt) == step["expectedSuccess"], name
+        if receipt.get("type") == 0:
+            assert receipt["value_credited"] is True, name
+            assert receipt["triggered_on"] == "finalized", name
+        else:
+            assert tx_execution_succeeded(receipt) == step["expectedSuccess"], name
         assert step["explorer"].endswith(step["hash"]), name
         for tx_hash in receipt.get("triggered_transactions", []):
             assert f"{name}/child/{tx_hash}" in evidence["steps"], (name, tx_hash)

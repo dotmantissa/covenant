@@ -178,3 +178,49 @@ describe("write submission integrity", () => {
     assert.throws(() => assertExecuted("repay", receipt), /unrecognized execution result/);
   });
 });
+
+
+describe("native settlement receipts", () => {
+  const parent = `0x${"1".repeat(64)}`;
+  const native = () => ({ type: 0, statusName: "FINALIZED", value: 100,
+    from_address: `0x${"2".repeat(40)}`, to_address: `0x${"3".repeat(40)}`,
+    value_credited: true, triggered_by: parent, triggered_on: "finalized",
+    consensus_data: null,
+  } as unknown as GenLayerTransaction);
+
+  it("accepts a credited finalized native child without a VM receipt", async () => {
+    const { assertSettlementChild } = await import("../../lib/chain");
+    assert.doesNotThrow(() => assertSettlementChild("draw", native(), parent));
+  });
+  it("rejects finalized native children whose recipient was not credited", async () => {
+    const { assertSettlementChild } = await import("../../lib/chain");
+    assert.throws(() => assertSettlementChild("draw", { ...native(), value_credited: false } as GenLayerTransaction, parent), /cannot be confirmed/);
+  });
+  it("rejects native children emitted by a different parent", async () => {
+    const { assertSettlementChild } = await import("../../lib/chain");
+    assert.throws(() => assertSettlementChild("draw", native(), "different"), /cannot be confirmed/);
+  });
+  it("rejects accepted native children before finalization", async () => {
+    const { assertSettlementChild } = await import("../../lib/chain");
+    assert.throws(() => assertSettlementChild("draw", { ...native(), statusName: "ACCEPTED" } as GenLayerTransaction, parent), /cannot be confirmed/);
+  });
+});
+
+
+it("verifies raw SEND ledger when the SDK omits native type and linkage", async () => {
+  const { waitForEmittedTransactions } = await import("../../lib/chain");
+  const parent = `0x${"1".repeat(64)}` as import("genlayer-js/types").TransactionHash;
+  const child = `0x${"2".repeat(64)}`;
+  let rawReads = 0;
+  const client = {
+    getTriggeredTransactionIds: async ({ hash }: { hash: string }) => hash === parent ? [child] : [],
+    waitForTransactionReceipt: async () => ({ status: 7, consensus_data: null }),
+    request: async () => {
+      rawReads++;
+      return { type: 0, status: "FINALIZED", value_credited: true, triggered_by: parent,
+        triggered_on: "finalized", value: 100, from_address: "0xsource", to_address: "0xtarget" };
+    },
+  } as unknown as import("../../lib/chain").Client;
+  await waitForEmittedTransactions(client, parent, "draw");
+  assert.equal(rawReads, 1);
+});

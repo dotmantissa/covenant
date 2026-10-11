@@ -26,6 +26,13 @@ EXPLORER = "https://explorer-studio.genlayer.com/tx/"
 SOURCE_URL = "https://raw.githubusercontent.com/dotmantissa/covenant/main/evidence/appeal-source.md"
 
 
+def execution_succeeded(receipt):
+    if receipt.get("type") == 0:
+        return (receipt.get("status_name") == "FINALIZED" and receipt.get("value_credited") is True
+                and bool(receipt.get("triggered_by")) and receipt.get("triggered_on") == "finalized")
+    return tx_execution_succeeded(receipt)
+
+
 def save(data):
     EVIDENCE.parent.mkdir(exist_ok=True)
     temp = EVIDENCE.with_suffix(".tmp")
@@ -98,18 +105,18 @@ class ReviewRun:
             save(self.data)  # submission recorded before waiting
         print(label, record["explorer"], flush=True)
         receipt = self.receipt(record["hash"])
-        assert tx_execution_succeeded(receipt) == expect_success, (label, receipt)
+        assert execution_succeeded(receipt) == expect_success, (label, receipt)
         assert receipt.get("status_name") == "FINALIZED" or receipt["status"] == 7, (label, receipt["status"])
-        leaders = receipt.get("consensus_data", {}).get("leader_receipt", [])
+        leaders = (receipt.get("consensus_data") or {}).get("leader_receipt", [])
         record["receipt"] = {k: receipt[k] for k in
-            ("hash", "status", "status_name", "to_address", "data", "triggered_transactions", "leader_only", "execution_mode") if k in receipt}
+            ("hash", "status", "status_name", "to_address", "data", "triggered_transactions", "leader_only", "execution_mode", "type", "value", "value_credited", "from_address", "triggered_by", "triggered_on") if k in receipt}
         record["receipt"]["consensus_data"] = {"leader_receipt": [
             {k: leader[k] for k in ("execution_result", "error", "result", "pending_transactions", "pending_eth_transactions", "vote", "mode") if k in leader}
             for leader in leaders]}
         record["receipt"]["consensus_data"]["validators"] = [
             {k: validator[k] for k in ("execution_result", "vote", "mode") if k in validator}
-            for validator in receipt.get("consensus_data", {}).get("validators", [])]
-        record["receipt"]["consensus_data"]["votes"] = receipt.get("consensus_data", {}).get("votes", {})
+            for validator in (receipt.get("consensus_data") or {}).get("validators", [])]
+        record["receipt"]["consensus_data"]["votes"] = (receipt.get("consensus_data") or {}).get("votes", {})
         receipt = record["receipt"]
         save(self.data)
         self.children(label, receipt)
