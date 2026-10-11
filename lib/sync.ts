@@ -15,7 +15,7 @@ import {
   type Facility,
   type Position,
 } from "@/lib/db";
-import { addresses, readView } from "@/lib/chain";
+import { addresses, readView, isAbsentVaultPosition } from "@/lib/chain";
 import { indexFacilityEvidence } from "@/lib/evidence-index";
 
 type RawChainFacility = {
@@ -207,7 +207,7 @@ export async function syncFacility(
       .returning();
     savedPosition = pos;
   } catch (error) {
-    if (!(error instanceof Error) || !/no position open on/.test(error.message)) throw error;
+    if (!isAbsentVaultPosition(error, facilityId)) throw error;
   }
 
   // Covenants

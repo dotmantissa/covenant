@@ -208,6 +208,27 @@ export async function readView<T>(
   return result as T;
 }
 
+/** Match only the vault's exact absence error, including Studio's VM envelope. */
+export function isAbsentVaultPosition(error: unknown, facilityId: string): boolean {
+  const expected = `[EXPECTED] no position open on ${facilityId.trim()}`;
+  let current = error;
+  for (let depth = 0; current && typeof current === "object" && depth < 6; depth++) {
+    const item = current as { message?: unknown; cause?: unknown; data?: { receipt?: {
+      execution_result?: unknown; result?: unknown;
+    } } };
+    if (item.message === expected || item.message === `UserError: ${expected}`) return true;
+    const receipt = item.data?.receipt;
+    const raw = typeof receipt?.result === "string" ? receipt.result :
+      receipt?.result && typeof receipt.result === "object" && "raw" in receipt.result ? receipt.result.raw : undefined;
+    if (receipt?.execution_result === "ERROR" && typeof raw === "string") {
+      const envelope = Buffer.from(raw, "base64");
+      if (envelope[0] === 1 && envelope.subarray(1).toString("utf8") === expected) return true;
+    }
+    current = item.cause;
+  }
+  return false;
+}
+
 export type WriteResult = {
   hash: TransactionHash;
   receipt: GenLayerTransaction;

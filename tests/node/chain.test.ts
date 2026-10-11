@@ -6,8 +6,33 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertExecuted, ContractRevert, sendWrite, withRetry } from "../../lib/chain";
+import { assertExecuted, ContractRevert, sendWrite, withRetry, isAbsentVaultPosition } from "../../lib/chain";
 import type { GenLayerTransaction } from "genlayer-js/types";
+
+describe("unfunded vault positions", () => {
+  const facilityId = "automation-review-1791714315";
+  const raw = "AVtFWFBFQ1RFRF0gbm8gcG9zaXRpb24gb3BlbiBvbiBhdXRvbWF0aW9uLXJldmlldy0xNzkxNzE0MzE1";
+  it("recognizes the actual nested Studio view-error envelope", () => {
+    const error = Object.assign(new Error("Missing or invalid parameters."), {
+      cause: { code: -32000, message: "execution failed", data: {
+        receipt: { execution_result: "ERROR", result: raw },
+      } },
+    });
+    assert.equal(isAbsentVaultPosition(error, facilityId), true);
+    assert.equal(isAbsentVaultPosition(error, "other-facility"), false);
+  });
+  it("does not swallow transport failures or unrelated reverts", () => {
+    for (const error of [new Error("timeout: no position open on " + facilityId),
+      { cause: { data: { receipt: { execution_result: "ERROR", result: Buffer.from("\u0001[EXPECTED] only lender may commit").toString("base64") } } } },
+      { data: { receipt: { execution_result: "SUCCESS", result: raw } } },
+      { data: { receipt: { execution_result: "ERROR", result: "invalid" } } },
+    ]) assert.equal(isAbsentVaultPosition(error, facilityId), false);
+  });
+  it("supports the explicit UserError form without substring matching", () => {
+    assert.equal(isAbsentVaultPosition(new Error("UserError: [EXPECTED] no position open on " + facilityId), facilityId), true);
+    assert.equal(isAbsentVaultPosition(new Error("unrelated: [EXPECTED] no position open on " + facilityId), facilityId), false);
+  });
+});
 
 describe("assertExecuted", () => {
   it("passes when transaction is FINALIZED with SUCCESS execution result", () => {
