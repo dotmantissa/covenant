@@ -68,3 +68,23 @@ def test_history_preserves_every_adjudication_and_appeal_settlement(funded,direc
     assert final['under_appeal'] and final['appeal_status']=='overturned'
     assert final['bond_paid_to']==funded['borrower'].as_hex and final['bond_atto']==str(GEN)
     assert result['finding']==final
+
+
+def test_late_ruling_does_not_reopen_an_already_settled_repayment(funded,direct_vm):
+    """Only unsettled accrual is recalculated; confirmed cash payments stay immutable."""
+    m,w,v=funded['monitor'],funded['wiring'],funded['vault']
+    direct_vm.warp('2026-10-20T00:00:00Z');direct_vm.sender=funded['borrower']
+    v.draw(FACILITY_ID,100*GEN);w.drain()
+    direct_vm.warp('2026-10-21T00:00:00Z')
+    repay_amount(funded,direct_vm,funded["borrower"],50*GEN+int(v.quote_outstanding(FACILITY_ID)['interest_atto']));w.drain()
+    collected=v.get_interest_collected(FACILITY_ID)['interest_collected_atto']
+    direct_vm.warp('2026-10-22T00:00:00Z')
+    restrictions=[{'covenant_index':COVENANT_RATIO,'consequence':'rate_step_up'}]
+    events=[{'revision':1,'at':'2026-10-20T12:00:00Z','restrictions':restrictions}]
+    w._invoke(v.address_bytes,{'method':'apply_enforcement','args':[FACILITY_ID,1,restrictions,events]},m.address_bytes)
+    position=v.get_position(FACILITY_ID)
+    assert int(position['drawn_atto'])==50*GEN
+    assert v.get_interest_collected(FACILITY_ID)['interest_collected_atto']==collected
+    denominator=10000*31536000
+    carry=(100*GEN*850*86400)%denominator
+    assert int(position['interest_accrued_atto'])==(50*GEN*1250*86400+carry)//denominator
