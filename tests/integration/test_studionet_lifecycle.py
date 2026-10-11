@@ -108,3 +108,27 @@ def test_complete_lender_recovery(evidence):
     checks = evidence["checks"]
     assert checks["cleanup_interest"]["lenderDeltaAtto"] == checks["cleanup_repayment"]["earnedInterestAtto"]
     assert int(checks["final_settlement"]["lenderCapitalDeltaAtto"]) == 100 * 10**18
+
+
+def test_immutable_chain_history_binds_the_complete_appeal(evidence):
+    monitor = get_contract_factory("CovenantMonitor").build_contract(
+        contract_address=evidence["contracts"]["covenantMonitor"])
+    history = monitor.list_tests(args=[0, 100]).call()["tests"]
+    ours = [row for row in history if row["facility_id"] == evidence["facilityId"]]
+    assert len(ours) == 3
+    assert [row["sequence"] for row in ours] == [1, 2, 3]
+    assert ours[0]["breached"] and ours[0]["consequence_applied"] == "acceleration"
+    assert ours[0]["locator"] == "AUDIT-DEBT-001"
+    assert not ours[0]["under_appeal"]
+    assert not ours[1]["breached"] and ours[1]["kind"] == "treasury"
+    assert ours[2]["under_appeal"] and not ours[2]["breached"]
+    assert ours[2]["appeal_status"] == "overturned"
+    assert ours[2]["bond_paid_to"].lower() == evidence["borrower"].lower()
+    assert int(ours[2]["bond_atto"]) == 10**18
+    assert ours[2]["locator"] == "AUDIT-DEBT-002"
+    assert ours[0]["content_hash"] != ours[2]["content_hash"]
+    for key in ["facilityRegistry", "covenantMonitor", "creditVault"]:
+        wiring = get_contract_factory({"facilityRegistry": "FacilityRegistry",
+            "covenantMonitor": "CovenantMonitor", "creditVault": "CreditVault"}[key]).build_contract(
+            contract_address=evidence["contracts"][key]).get_wiring().call()
+        assert wiring["wiring_sealed"] is True
