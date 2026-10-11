@@ -1,10 +1,16 @@
-# Reviewer lifecycle: senior debt disclosure
+# Reviewer lifecycle: corrected senior debt disclosure
 
-This document is a controlled public test disclosure for Covenant's Studionet
-review facility. Amounts and actions here describe simulated entities.
+This is a controlled public test disclosure for Covenant's Studionet review
+facility. Amounts and actions describe simulated entities.
 
-Artifact REVIEW-DEBT-001, published 2026-10-11:
-The borrower incurred and executed a new senior debt facility of 25 GEN on
-2026-10-11. The lender did not give written consent. The senior loan was drawn
-and is outstanding. The promise to incur no new senior debt without the lender's
-written consent is breached.
+Artifact REVIEW-DEBT-002, published 2026-10-11, supersedes REVIEW-DEBT-001.
+The earlier disclosure was incorrect: the proposed 25 GEN senior facility was
+only an unexecuted proposal. No senior debt agreement was executed, no senior
+loan was incurred, no funds were drawn, and no senior loan is outstanding.
+The proposal was withdrawn without creating any obligation. Written lender
+consent was therefore not required. These were also the facts when the earlier
+disclosure was published. The borrower has complied throughout with the promise
+to incur no new senior debt without the lender's written consent.
+
+This correction concerns the alleged additional senior debt only. It does not
+cancel or forgive any existing debt drawn from the Covenant credit vault.
