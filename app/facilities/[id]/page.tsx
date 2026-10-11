@@ -423,6 +423,7 @@ export default function FacilityConsolePage({
         {pending.map(intent=><div key={intent.intentId}>{intent.label.replace(/_/g,' ')}: {intent.status}
           {intent.txHash && <a href={`https://explorer-studio.genlayer.com/tx/${intent.txHash}`} target="_blank" rel="noreferrer" className="underline ml-2">View transaction</a>}
           {intent.error && <p>{intent.error}</p>}
+          {intent.status==='settlement_failed'&&['test_covenant','resolve_appeal','sync_enforcement'].includes(intent.label)&&<button className="underline" disabled={actionLoading} onClick={()=>void (async()=>{setActionLoading(true);try{await apiFetch(`/api/facilities/${encodeURIComponent(facilityId)}/sync-enforcement`,{method:'POST'},await getAccessToken());await loadData(true);setActionSuccess('Current enforcement delivery repaired; the original failed receipt remains in the audit history.');}catch(e){setError(e instanceof Error?e.message:'Repair failed.');}finally{setActionLoading(false);}})()}>Repair enforcement delivery</button>}
         </div>)}
       </div>}
       {actionSuccess && (

@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   sweep:
+    if: vars.COVENANT_MONITORING_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

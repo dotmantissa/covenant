@@ -40,3 +40,9 @@ Thumbs.db
 .vscode/
 .vercel
 .env*
+
+/test-results/
+/playwright-report/
+
+/.deploy-journal.json
+/.deploy-journal.json.tmp

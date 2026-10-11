@@ -54,6 +54,7 @@ export default function FacilitiesPage() {
   // Form state
   const [draftId, setDraftId] = useState("");
   const [draftBorrowerName, setDraftBorrowerName] = useState("");
+  const [draftBorrowerEmail, setDraftBorrowerEmail] = useState("");
   const [draftBorrowerAddress, setDraftBorrowerAddress] = useState("");
   const [draftPurpose, setDraftPurpose] = useState("");
   const [draftPrincipalGen, setDraftPrincipalGen] = useState("1000");
@@ -109,6 +110,7 @@ export default function FacilitiesPage() {
             facilityId: draftId.trim(),
             borrowerName: draftBorrowerName.trim(),
             borrowerAddress: draftBorrowerAddress.trim(),
+            borrowerEmail: draftBorrowerEmail.trim().toLowerCase(),
             purpose: draftPurpose.trim(),
             principalAtto,
             rateBp,
@@ -423,16 +425,22 @@ export default function FacilitiesPage() {
 
               <div className="space-y-1">
                 <label className="font-mono text-[11px] text-[var(--ink-2)]">
-                  Borrower GenLayer Address *
+                  Borrower GenLayer Address (or use email below)
                 </label>
                 <input
                   type="text"
-                  required
+                  required={!draftBorrowerEmail}
                   value={draftBorrowerAddress}
-                  onChange={(e) => setDraftBorrowerAddress(e.target.value)}
+                  onChange={(e) => {setDraftBorrowerAddress(e.target.value);setDraftBorrowerEmail("");}}
                   placeholder="0x..."
                   className="w-full px-3 py-2 rounded bg-[var(--paper-2)] border border-[var(--rule)] text-[var(--ink)] font-mono focus:outline-hidden focus:border-[var(--ink)]"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="borrower-email">Borrower email</label>
+                <input id="borrower-email" type="email" value={draftBorrowerEmail} onChange={e=>{setDraftBorrowerEmail(e.target.value);setDraftBorrowerAddress("");}} className="w-full px-3 py-2 border rounded" placeholder="borrower@example.com"/>
+                <p>The borrower must sign in once and register their address on the Account page. Email lookup uses that registered account; lenders cannot authorize covenants for it.</p>
               </div>
 
               <div className="space-y-1">

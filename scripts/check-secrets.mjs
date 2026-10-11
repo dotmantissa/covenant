@@ -1,5 +1,5 @@
 /**
- * Fails if any genuine secret from .env.local appears in a tracked file.
+ * Fails if any genuine secret from local environment files appears in a tracked file.
  *
  * Run with `npm run check:secrets`. Intended for the pre-push sweep and for CI.
  *
@@ -9,18 +9,18 @@
  * not secrets and do appear in committed code.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 
-const ENV_FILE = ".env.local";
+const ENV_FILES = readdirSync(".").filter(name => /^\.env(?:\.|$)/.test(name) && name !== ".env.example");
 const SECRET_NAME = /(SECRET|PASSWORD|TOKEN|PRIVATE_KEY|DATABASE_URL|_KEY)$/;
 
-if (!existsSync(ENV_FILE)) {
-  console.log(`${ENV_FILE} not present, nothing to check`);
+if (!ENV_FILES.length) {
+  console.log(`No local environment files present, nothing to check`);
   process.exit(0);
 }
 
 const secrets = [];
-for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
+for (const file of ENV_FILES) for (const line of readFileSync(file, "utf8").split("\n")) {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith("#")) continue;
   const eq = trimmed.indexOf("=");
@@ -30,12 +30,12 @@ for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
   if (name.startsWith("NEXT_PUBLIC_")) continue;
   if (!SECRET_NAME.test(name)) continue;
   // Very short values would match everywhere and mean nothing.
-  if (value.length < 8) continue;
+  if (value.length < 8 || value.includes("[SENSITIVE]")) continue;
   secrets.push({ name, value });
 }
 
 if (secrets.length === 0) {
-  console.log("no secret values set in .env.local, nothing to check");
+  console.log("no secret values set in local environment files, nothing to check");
   process.exit(0);
 }
 

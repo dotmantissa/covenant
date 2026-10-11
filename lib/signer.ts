@@ -22,7 +22,7 @@
  *    enforcement and the wrong one for custody of real money, where the user
  *    should hold the key and sign for themselves.
  *
- * studionet is gasless, so derived accounts never need funding.
+ * Studionet writes are gasless; native commitments, repayments and bonds require test GEN funding.
  */
 import { hkdfSync } from "node:crypto";
 import { createAccount } from "genlayer-js";

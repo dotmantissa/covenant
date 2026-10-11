@@ -58,6 +58,7 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4">
+          <Link href="/account" className="text-xs underline">Account</Link>
           <ThemeToggle />
 
           {ready && (

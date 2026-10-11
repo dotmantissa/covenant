@@ -54,3 +54,28 @@ test("actual sweep mutation rejects anonymous callers before executing signer wo
   assert.equal((await handlers.POST(new Request('https://app/api/sweep',{headers:{authorization:`Bearer ${process.env.CRON_SECRET}`}}))).status,200);
   assert.equal(executions,1);delete process.env.CRON_SECRET;
 });
+test('account funding binds recipient to authenticated actor and never repeats an ambiguous mint',async()=>{
+ let authorized=false,network='studionet',lease=false,mints=0;
+ const handlers=route('app/api/me/fund/route.ts',{
+  'node:crypto':{randomUUID:()=> 'funding-lease'},
+  '@/lib/api':{jsonResponse:(data:unknown,status=200)=>new Response(JSON.stringify(data),{status}),handleRouteError:(e:Error)=>new Response(e.message,{status:authorized?500:401})},
+  '@/lib/auth':{requireActor:async()=>{if(!authorized)throw Error('sign in');return {privyDid:'did:owner',address:'0xowner'};}},
+  '@/lib/env':{genlayerNetwork:()=>network},
+  '@/lib/transactions':{acquireLock:async(key:string,_holder:string,seconds:number)=>{assert.equal(key,'demo-funding:did:owner');assert.equal(seconds,86400);if(lease)return false;lease=true;return true;}},
+  '@/lib/chain':{readClient:()=>({request:async(input:{params:unknown[]})=>{assert.deepEqual(Array.from(input.params),['0xowner',100*10**18]);mints++;throw Error('funding response lost');}})},
+ });
+ const call=()=>handlers.POST(new Request('https://app/api/me/fund',{method:'POST',body:JSON.stringify({address:'attacker',amount:'999999'})}));
+ assert.equal((await call()).status,401);assert.equal(mints,0);authorized=true;network='testnet_bradbury';assert.equal((await call()).status,400);assert.equal(mints,0);
+ network='studionet';assert.equal((await call()).status,500);assert.equal(mints,1);assert.equal((await call()).status,429);assert.equal(mints,1);
+});
+test('changed signing configuration cannot overwrite a registered account address',async()=>{
+ let conflict:Record<string,unknown>|undefined;
+ const handlers=route('lib/auth.ts',{
+  'drizzle-orm':{eq:()=>true,sql:()=>null},
+  '@/lib/db':{ensureDatabase:async()=>{},users:{privyDid:'did',genlayerAddress:'original'},db:()=>({insert:()=>({values:()=>({onConflictDoUpdate:(input:Record<string,unknown>)=>{conflict=input;return {returning:async()=>[]};}})})})},
+  '@/lib/privy':{identify:async()=>({privyDid:'did:existing',email:'owner@example.com'}),NotSignedIn:class extends Error{}},
+  '@/lib/signer':{deriveAddress:()=> 'changed-address'},
+ }) as unknown as {requireActor:(request:Request)=>Promise<unknown>};
+ await assert.rejects(()=>handlers.requireActor(new Request('https://app')),/Restore the original master secret/);
+ assert(conflict?.setWhere);assert(!('genlayerAddress' in (conflict?.set as Record<string,unknown>)));
+});

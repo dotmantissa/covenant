@@ -25,9 +25,8 @@ export function formatAtto(attoStr?: string | null, unit = "GEN"): string {
     const divisor = 10n ** 18n;
     const whole = raw / divisor;
     const remainder = raw % divisor;
-    const fraction = (remainder / 10n ** 14n).toString().padStart(4, "0");
-    const formattedWhole = Number(whole).toLocaleString("en-US");
-    return `${formattedWhole}.${fraction.slice(0, 2)} ${unit}`;
+    const fraction = remainder.toString().padStart(18, "0").replace(/0+$/, "");
+    return `${whole.toLocaleString("en-US")}${fraction ? `.${fraction}` : ""} ${unit}`;
   } catch {
     return `${attoStr} ${unit}`;
   }

@@ -24,7 +24,7 @@ export async function runSweep(options:{trigger?:"cron"|"manual";signerDid?:stri
       result.details.push({facilityId:saved.facilityId,covenantIndex:0,outcome:result.testedCount?'tested':result.failedCount?'failed':'pending',txHash:updated.txHash??undefined,message:updated.error??updated.status});
     }else {
       const due=await readView<DueCovenant[]>(addresses().facilityRegistry,'due_covenants');result.dueCount=due.length;
-      const item=due[0];
+      const item=due.length?due[Math.floor(Date.now()/300000)%due.length]:undefined;
       if(item) {
         const method=item.action==='resolve_appeal'?'resolve_appeal':'test_covenant';
         const requestKey=createHash('sha256').update(`${method}:${item.facility_id}:${item.covenant_index}:${item.next_due_at}:${Math.floor(Date.now()/300000)}`).digest('hex');

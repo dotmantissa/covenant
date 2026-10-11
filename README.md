@@ -12,7 +12,7 @@ Covenant moves the agreement and its enforcement on-chain:
 1. Loan terms and covenants are registered in an intelligent contract (`FacilityRegistry`).
 2. Covenants are written in plain English alongside structured testing parameters.
 3. Validators read external financial disclosures or on-chain balances, extract reported figures, run sandboxed arithmetic, and reach consensus on compliance (`CovenantMonitor`).
-4. When a breach is confirmed, the monitor emits consequences directly to the vault contract (`CreditVault`), which freezes draws, steps up the borrowing rate, or initiates acceleration trustlessly.
+4. When a breach is confirmed, the monitor emits consequences directly to the vault contract (`CreditVault`), which freezes draws, steps up the borrowing rate, or initiates acceleration under the approved covenant terms. Contract permissions are enforced on chain; the email application uses server custody.
 
 ## Contracts Architecture
 
@@ -135,7 +135,7 @@ The codebase includes comprehensive test suites across contracts, direct executi
 ### 1. Direct Mode Contract Tests
 Tests business logic, math sandboxing, edge cases, and cross-contract interactions:
 ```bash
-.venv/bin/pytest tests/direct -v
+pytest tests/direct -v
 ```
 
 ### 2. Live Studionet Integration Tests
@@ -216,3 +216,18 @@ the source used for each consensus decision.
 requires stored source hashes to match and refuses to silently reuse outdated
 code. Update hosting environment addresses from `deploy/addresses.json` after
 redeployment. Older immutable deployments retain their original code and addresses.
+
+
+## Deployment and operating boundaries
+
+Borrowers approve the SHA256 digest of the full immutable covenant and facility terms. Displayed terms are refreshed from the deployment-scoped cache, including approved sources, 120-day ratio evidence freshness and the calendar-quarter filing schedule. Filing tests require the latest quarter whose inclusive deadline has expired; an older report cannot satisfy a newer obligation. Consensus binds exact figures, dates, approved-source identity and the SHA256 of the fetched text used by the panel (up to 24,000 characters), rather than claiming a hash of an entire original PDF. Prose findings store deterministic narratives rather than unbound leader explanations.
+
+Rates accrue by effective test timestamps using the complete finalized enforcement event history. Reordered delivery cannot erase a stepped-rate interval. A successful appeal clears the incorrectly imposed acceleration and restores draws while preserving debt; past interest is accounted for under the approved historical rates, not refunded retrospectively. A rate-only remedy preserves borrowing rights. Wiring is explicitly sealed before production facilities are created; the initial deployer cannot later replace enforcement authorities.
+
+Every write is journaled before broadcast. A reconnect polls its saved transaction and all descendants, then refreshes finalized facility state. An ambiguous transport error does not permit automatic replacement signing. A root revert permits a fresh request; failed descendant settlement retains its original receipt and can repair enforcement delivery by replaying the current snapshot. Historical findings are immutable, with separately stored receipts whose decoded output must exactly match the original finding, including an appeal's bond recipient. Receipt/vote enrichment can lag indexing and is labelled pending.
+
+Sign in with email, open **Account**, and request 100 test GEN on Studionet before committing funds, repaying or posting a bond. Submission is gasless; native transfers require balances. Borrowers sign in once to register an account, then lenders can select that borrower by email. Each account has its own DID-derived address. These keys remain controlled by the application server. Preserve `SIGNER_MASTER_SECRET` securely: an accidental change fails closed instead of overwriting registered addresses; restore the original secret to recover access. This is a test-token demonstration, not user-held production custody.
+
+Production monitoring uses `.github/workflows/covenant-scheduler.yml` every five minutes, plus a daily Vercel Hobby fallback. Configure the same private random secret as production `CRON_SECRET` and repository Actions secret `COVENANT_CRON_SECRET`, then set repository variable `COVENANT_MONITORING_ENABLED=true`. GitHub scheduled jobs can be delayed; cadence is best effort. The endpoint rejects unauthenticated invocation, locks concurrent runs, and processes one saved settlement or due covenant per run. Open appeals and expired cure windows remain scheduled, and due-selection rotates to prevent a permanently unavailable source starving other facilities. `/api/sweep` publishes pass timestamps, pending/confirmed/failure details. Facility pages label cached refresh time; failed chain refresh is explicitly shown.
+
+`npm run test:browser` renders the actual facility/account components in Chromium, stubbing only the Privy and API transport boundaries. It proves saved-transaction appeal polling, authoritative ruling refresh, restored draw controls, visible settlement failures, exact 0.29 GEN signing and account funding refresh. It does not claim live Privy OTP delivery. Direct tests exercise adversarial validators and reordered messages; Studionet explorer receipts separately prove real consensus and native settlement.

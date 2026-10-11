@@ -53,8 +53,8 @@ export default async function HomePage() {
 
         <p className="text-base sm:text-lg text-[var(--ink-2)] max-w-3xl leading-relaxed">
           Covenant connects natural language loan conditions directly to vault enforcement.
-          Financial covenants, regulatory filings, and treasury thresholds are evaluated continuously.
-          Consequences such as draw stops, rate step-ups, and acceleration fire trustlessly on chain.
+          Financial covenants, regulatory filings, and treasury thresholds are tested on schedule by validator consensus.
+          Consequences such as draw stops, rate step-ups, and acceleration follow borrower-approved terms on chain. Email signing accounts are controlled by the application server.
         </p>
 
         <div className="pt-2 flex flex-wrap items-center gap-4">

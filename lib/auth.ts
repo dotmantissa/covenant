@@ -39,11 +39,12 @@ export async function requireActor(request: Request): Promise<Actor> {
     .values({ privyDid, email, genlayerAddress: address })
     .onConflictDoUpdate({
       target: users.privyDid,
-      set: { email, genlayerAddress: address, lastSeenAt: sql`now()` },
+      set: { email, lastSeenAt: sql`now()` },
+      setWhere: eq(sql`lower(${users.genlayerAddress})`, address.toLowerCase()),
     })
     .returning();
 
-  if (!row) throw new Error("could not record the signed in user");
+  if (!row) throw new Error("Signing configuration changed. Restore the original master secret; existing account addresses must not be reassigned.");
   return { privyDid, email, address, user: row };
 }
 
