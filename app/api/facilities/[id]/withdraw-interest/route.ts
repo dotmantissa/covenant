@@ -1,3 +1,4 @@
+import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
 import { addresses, clientFor, sendWrite } from "@/lib/chain";
@@ -10,7 +11,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     const actor = await requireActor(request);
     const { id } = await params;
     const body = await request.json();
-    const amount = BigInt(body.amountAtto ?? "0");
+    const amount = attoInput(body.amountAtto ?? "0", true);
     if (amount < 0n) return jsonResponse({ error: "amount must be nonnegative" }, 400);
     const result = await sendWrite(clientFor(actor.privyDid), "withdraw_interest",
       addresses().creditVault, "withdraw_interest", [id, amount]);

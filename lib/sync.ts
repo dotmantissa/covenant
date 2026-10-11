@@ -7,6 +7,7 @@
  */
 import {
   alerts,
+  ensureDatabase,
   covenants,
   covenantTests,
   db,
@@ -62,6 +63,9 @@ type RawChainCovenant = {
   appeal_status: string;
   appeal_bond_atto: string;
   borrower_authorized: boolean;
+  terms_digest: string;
+  evidence_max_age_days: number;
+  reporting_schedule: string;
 };
 
 type RawChainPosition = {
@@ -89,6 +93,7 @@ let facilityIndex: { registry: string; expires: number; ids: ReadonlySet<string>
 
 /** Scope the read cache to agreements actually registered in this deployment. */
 export async function currentFacilityIds(): Promise<ReadonlySet<string>> {
+  await ensureDatabase();
   const registry = addresses().facilityRegistry;
   if (facilityIndex?.registry === registry && facilityIndex.expires > Date.now()) {
     return facilityIndex.ids;
@@ -113,6 +118,7 @@ export async function syncFacility(
   position?: Position;
   covenants: Covenant[];
 }> {
+  await ensureDatabase();
   const addrs = addresses();
   const rawFacility = await readView<RawChainFacility>(
     addrs.facilityRegistry,
@@ -171,13 +177,16 @@ export async function syncFacility(
       [facilityId],
     );
 
+    const quote = await readView<{interest_atto: string}>(addrs.creditVault, "quote_outstanding", [facilityId]);
+    const collected = await readView<{interest_collected_atto: string}>(addrs.creditVault, "get_interest_collected", [facilityId]);
     const [pos] = await db()
       .insert(positions)
       .values({
         facilityId: rawPos.facility_id,
         committedAtto: rawPos.committed_atto,
         drawnAtto: rawPos.drawn_atto,
-        accruedInterestAtto: rawPos.interest_accrued_atto,
+        accruedInterestAtto: quote.interest_atto,
+        collectedInterestAtto: collected.interest_collected_atto,
         effectiveRateBp: rawPos.current_rate_bp,
         drawFrozen: rawPos.draw_frozen,
         accelerated: rawPos.accelerated,
@@ -188,7 +197,8 @@ export async function syncFacility(
         set: {
           committedAtto: rawPos.committed_atto,
           drawnAtto: rawPos.drawn_atto,
-          accruedInterestAtto: rawPos.interest_accrued_atto,
+          accruedInterestAtto: quote.interest_atto,
+        collectedInterestAtto: collected.interest_collected_atto,
           effectiveRateBp: rawPos.current_rate_bp,
           drawFrozen: rawPos.draw_frozen,
           accelerated: rawPos.accelerated,
@@ -197,8 +207,8 @@ export async function syncFacility(
       })
       .returning();
     savedPosition = pos;
-  } catch {
-    // No position open on chain yet (uncommitted)
+  } catch (error) {
+    if (!(error instanceof Error) || !/no position open on/.test(error.message)) throw error;
   }
 
   // Covenants
@@ -208,6 +218,7 @@ export async function syncFacility(
     [facilityId],
   );
 
+  const enforcement = await readView<{ restrictions: { covenant_index: number; consequence: string }[] }>(addrs.covenantMonitor, "get_enforcement_state", [facilityId]);
   const savedCovenants: Covenant[] = [];
   for (const c of rawCovenants) {
     const [saved] = await db()
@@ -228,6 +239,9 @@ export async function syncFacility(
         filingDeadlineDays: c.filing_deadline_days,
         breachConsequence: c.breach_consequence,
         sourceUrls: c.source_urls,
+        termsDigest: c.terms_digest, evidenceMaxAgeDays: c.evidence_max_age_days,
+        reportingSchedule: c.reporting_schedule,
+        enforcementConsequence: enforcement.restrictions.find(r => r.covenant_index === c.covenant_index)?.consequence ?? "",
         status: c.borrower_authorized ? c.status : "pending_authorization",
         observedBp: c.observed_bp,
         observedAtto: c.observed_atto,
@@ -244,6 +258,15 @@ export async function syncFacility(
       .onConflictDoUpdate({
         target: [covenants.facilityId, covenants.covenantIndex],
         set: {
+          text: c.text, kind: c.kind, metric: c.metric,
+          numeratorLabel: c.numerator_label, denominatorLabel: c.denominator_label,
+          thresholdBp: c.threshold_bp, thresholdAtto: c.threshold_atto,
+          comparator: c.comparator, testFrequencyHours: c.test_frequency_hours,
+          curePeriodHours: c.cure_period_hours, filingDeadlineDays: c.filing_deadline_days,
+          breachConsequence: c.breach_consequence, sourceUrls: c.source_urls,
+          termsDigest: c.terms_digest, evidenceMaxAgeDays: c.evidence_max_age_days,
+          reportingSchedule: c.reporting_schedule,
+          enforcementConsequence: enforcement.restrictions.find(r => r.covenant_index === c.covenant_index)?.consequence ?? "",
           status: c.borrower_authorized ? c.status : "pending_authorization",
           observedBp: c.observed_bp,
           observedAtto: c.observed_atto,

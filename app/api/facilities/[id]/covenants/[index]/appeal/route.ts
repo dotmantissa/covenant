@@ -1,3 +1,4 @@
+import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
 import { clientFor, addresses, sendWrite } from "@/lib/chain";
@@ -16,7 +17,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     const body = await request.json();
 
     const { bondAtto } = body;
-    if (!bondAtto || BigInt(bondAtto) <= 0n) {
+    if (!bondAtto || attoInput(bondAtto) <= 0n) {
       return jsonResponse({ error: "bondAtto must be greater than zero" }, 400);
     }
 
@@ -29,7 +30,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       addrs.covenantMonitor,
       "appeal_breach",
       [facilityId, covenantIndex],
-      BigInt(bondAtto),
+      attoInput(bondAtto),
     );
 
     // Sync from chain

@@ -8,7 +8,7 @@
  * address, and the contracts check it.
  */
 import { eq, inArray, sql } from "drizzle-orm";
-import { db, users, type User } from "@/lib/db";
+import { db, users, ensureDatabase, type User } from "@/lib/db";
 import { identify, NotSignedIn } from "@/lib/privy";
 import { deriveAddress } from "@/lib/signer";
 
@@ -31,6 +31,7 @@ export type Actor = {
  */
 export async function requireActor(request: Request): Promise<Actor> {
   const { privyDid, email } = await identify(request);
+  await ensureDatabase();
   const address = deriveAddress(privyDid);
 
   const [row] = await db()
@@ -50,6 +51,7 @@ export async function requireActor(request: Request): Promise<Actor> {
  * Returns the actor if a valid Privy token is provided, or null if unauthenticated.
  */
 export async function optionalActor(request: Request): Promise<Actor | null> {
+  await ensureDatabase();
   try {
     return await requireActor(request);
   } catch (err) {

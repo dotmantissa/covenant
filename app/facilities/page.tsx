@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
+import { decimalUnits } from "@/lib/amounts";
 import { apiFetch } from "@/lib/client-api";
 import { formatAddress, formatAtto, formatBp } from "@/lib/format";
 import { PageLoading } from "@/components/spinner";
@@ -96,9 +97,9 @@ export default function FacilitiesPage() {
 
     try {
       const token = await getAccessToken();
-      const principalAtto = (BigInt(Math.floor(parseFloat(draftPrincipalGen) || 1)) * 10n ** 18n).toString();
-      const rateBp = Math.round(parseFloat(draftRatePercent) * 100);
-      const stepUpBp = Math.round(parseFloat(draftStepUpPercent) * 100);
+      const principalAtto = decimalUnits(draftPrincipalGen).toString();
+      const rateBp = Number(decimalUnits(draftRatePercent, 2));
+      const stepUpBp = Number(decimalUnits(draftStepUpPercent, 2, true));
 
       await apiFetch(
         "/api/facilities",

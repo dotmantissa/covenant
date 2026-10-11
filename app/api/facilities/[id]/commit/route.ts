@@ -1,3 +1,4 @@
+import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
 import { clientFor, addresses, sendWrite } from "@/lib/chain";
@@ -14,7 +15,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     const body = await request.json();
 
     const { amountAtto } = body;
-    if (!amountAtto || BigInt(amountAtto) <= 0n) {
+    if (!amountAtto || attoInput(amountAtto) <= 0n) {
       return jsonResponse({ error: "amountAtto must be greater than zero" }, 400);
     }
 
@@ -27,7 +28,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       addrs.creditVault,
       "commit",
       [facilityId],
-      BigInt(amountAtto),
+      attoInput(amountAtto),
     );
 
     const synced = await syncFacility(facilityId);

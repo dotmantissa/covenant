@@ -26,3 +26,5 @@ export function db(): Database {
 }
 
 export * from "./schema";
+
+export { ensureDatabase } from "./bootstrap";

@@ -29,11 +29,15 @@ import {
   jsonb,
   numeric,
   pgTable,
+  pgSchema,
   serial,
   text,
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+
+import { deploymentSchema } from "@/lib/deployment";
+const deployment = pgSchema(deploymentSchema());
 
 /** Mirrors u256 on chain. Kept as a string end to end. */
 const atto = (name: string) => numeric(name, { precision: 78, scale: 0 });
@@ -65,7 +69,7 @@ export const users = pgTable(
 
 // ---------------------------------------------------------------- facility
 
-export const facilities = pgTable(
+export const facilities = deployment.table(
   "facilities",
   {
     /** The same id the registry uses on chain. */
@@ -94,7 +98,7 @@ export const facilities = pgTable(
 );
 
 /** Vault position. Separate from the facility because the vault owns it. */
-export const positions = pgTable("positions", {
+export const positions = deployment.table("positions", {
   facilityId: text("facility_id")
     .primaryKey()
     .references(() => facilities.facilityId, { onDelete: "cascade" }),
@@ -102,6 +106,7 @@ export const positions = pgTable("positions", {
   drawnAtto: atto("drawn_atto").notNull().default("0"),
   accruedInterestAtto: atto("accrued_interest_atto").notNull().default("0"),
   effectiveRateBp: integer("effective_rate_bp").notNull().default(0),
+  collectedInterestAtto: atto("collected_interest_atto").notNull().default("0"),
   drawFrozen: boolean("draw_frozen").notNull().default(false),
   accelerated: boolean("accelerated").notNull().default(false),
   syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
@@ -109,7 +114,7 @@ export const positions = pgTable("positions", {
 
 // --------------------------------------------------------------- covenants
 
-export const covenants = pgTable(
+export const covenants = deployment.table(
   "covenants",
   {
     id: serial("id").primaryKey(),
@@ -136,6 +141,10 @@ export const covenants = pgTable(
     /** draw_stop | rate_step_up | acceleration */
     breachConsequence: text("breach_consequence").notNull(),
     sourceUrls: jsonb("source_urls").$type<string[]>().notNull().default([]),
+    termsDigest: text("terms_digest").notNull().default(""),
+    enforcementConsequence: text("enforcement_consequence").notNull().default(""),
+    evidenceMaxAgeDays: integer("evidence_max_age_days").notNull().default(120),
+    reportingSchedule: text("reporting_schedule").notNull().default(""),
 
     /** pending_authorization | untested | compliant | breach_pending_cure | breached | cured */
     status: text("status").notNull().default("untested"),
@@ -170,7 +179,7 @@ export const covenants = pgTable(
  * should be able to follow a breach back from the consequence to the sentence
  * in a filing that caused it, without taking anyone's word for a step.
  */
-export const covenantTests = pgTable(
+export const covenantTests = deployment.table(
   "covenant_tests",
   {
     id: serial("id").primaryKey(),
@@ -225,7 +234,7 @@ export const covenantTests = pgTable(
 
 // ------------------------------------------------------------------ alerts
 
-export const alerts = pgTable(
+export const alerts = deployment.table(
   "alerts",
   {
     id: serial("id").primaryKey(),
@@ -256,7 +265,7 @@ export const alerts = pgTable(
 // ------------------------------------------------------------------ sweeps
 
 /** One row per scheduler pass, so a missed test can be explained. */
-export const sweeps = pgTable("sweeps", {
+export const sweeps = deployment.table("sweeps", {
   id: serial("id").primaryKey(),
   /** cron | manual */
   trigger: text("trigger").notNull().default("cron"),

@@ -1,3 +1,4 @@
+import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { actorsByAddress, optionalActor, requireActor, userByEmail } from "@/lib/auth";
 import { clientFor, addresses, sendWrite } from "@/lib/chain";
@@ -140,7 +141,7 @@ export async function POST(request: Request) {
         String(finalBorrowerAddress).trim(),
         String(borrowerName).trim(),
         String(purpose).trim(),
-        BigInt(principalAtto),
+        attoInput(principalAtto),
         Number(rateBp),
         Number(stepUpBp),
         String(treasuryRpcUrl).trim(),

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
+import { decimalUnits, integerInput, exactDecimal } from "@/lib/amounts";
 import { apiFetch } from "@/lib/client-api";
 import { formatAddress, formatAtto, formatBp, formatIsoDate } from "@/lib/format";
 import { PageLoading } from "@/components/spinner";
@@ -69,6 +70,10 @@ type CovenantDetail = {
   breachCount: number;
   appealStatus: string;
   appealBondAtto: string;
+  termsDigest: string;
+  enforcementConsequence: string;
+  evidenceMaxAgeDays: number;
+  reportingSchedule: string;
 };
 
 type TestRow = {
@@ -154,6 +159,11 @@ export default function FacilityConsolePage({
     }
   }, [ready, loadData]);
 
+  const amountPreview = (value: string, unit: string) => {
+    try { return `Exact amount: ${exactDecimal(decimalUnits(value).toString())} ${unit}`; }
+    catch { return "Enter a positive decimal amount with at most18 fractional digits."; }
+  };
+
   // Handle Capital Operations (commit, draw, repay, withdraw)
   const handleCapitalAction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,7 +173,7 @@ export default function FacilityConsolePage({
 
     try {
       const token = await getAccessToken();
-      const amountAtto = (BigInt(Math.floor(parseFloat(actionAmountGen) * 100)) * 10n ** 16n).toString();
+      const amountAtto = decimalUnits(actionAmountGen).toString();
 
       await apiFetch(
         `/api/facilities/${encodeURIComponent(facilityId)}/${modalType}`,
@@ -189,7 +199,7 @@ export default function FacilityConsolePage({
     try {
       const token = await getAccessToken();
       await apiFetch(`/api/facilities/${encodeURIComponent(facilityId)}/covenants/${index}/approve`,
-        { method: "POST" }, token);
+        { method: "POST", body: JSON.stringify({ termsDigest: covenants.find(c => c.covenantIndex === index)?.termsDigest }) }, token);
       setActionSuccess(`Covenant #${index} approved. Its displayed terms are now enforceable.`);
       await loadData(true);
     } catch (err) {
@@ -205,8 +215,8 @@ export default function FacilityConsolePage({
 
     try {
       const token = await getAccessToken();
-      const thresholdBp = Math.round(parseFloat(covThresholdVal) * 10000);
-      const thresholdAtto = (BigInt(Math.floor(parseFloat(covThresholdVal) || 0)) * 10n ** 18n).toString();
+      const thresholdBp = covKind === "ratio" ? Number(decimalUnits(covThresholdVal, 4)) : 0;
+      const thresholdAtto = covKind === "treasury" ? decimalUnits(covThresholdVal).toString() : "0";
       const sourceUrls = covUrls
         .split("\n")
         .map((u) => u.trim())
@@ -225,9 +235,9 @@ export default function FacilityConsolePage({
             thresholdBp: covKind === "ratio" ? thresholdBp : 0,
             thresholdAtto: covKind === "treasury" ? thresholdAtto : "0",
             comparator: covComparator,
-            testFrequencyHours: parseInt(covFrequencyHours, 10),
-            curePeriodHours: parseInt(covCureHours, 10),
-            filingDeadlineDays: parseInt(covDeadlineDays, 10),
+            testFrequencyHours: integerInput(covFrequencyHours, "Schedule"),
+            curePeriodHours: integerInput(covCureHours, "Schedule"),
+            filingDeadlineDays: integerInput(covDeadlineDays, "Schedule"),
             breachConsequence: covConsequence,
             sourceUrls,
           }),
@@ -276,7 +286,7 @@ export default function FacilityConsolePage({
 
     try {
       const token = await getAccessToken();
-      const bondAtto = (BigInt(Math.floor(parseFloat(appealBondGen) || 1)) * 10n ** 18n).toString();
+      const bondAtto = decimalUnits(appealBondGen).toString();
 
       await apiFetch(
         `/api/facilities/${encodeURIComponent(facilityId)}/covenants/${selectedCovenantIndex}/appeal`,
@@ -604,7 +614,7 @@ export default function FacilityConsolePage({
                         </td>
 
                         <td className="py-4 px-4 font-mono text-[11px] tabular-numbers text-[var(--ink)]">
-                          {c.comparator} {c.kind === "ratio" ? formatBp(c.thresholdBp, true) : c.kind === "treasury" ? formatAtto(c.thresholdAtto) : `${c.filingDeadlineDays} days`}
+                          {c.comparator} {c.kind === "ratio" ? formatBp(c.thresholdBp, true) : c.kind === "treasury" ? `${exactDecimal(c.thresholdAtto)} ETH` : `${c.filingDeadlineDays} days`}
                         </td>
 
                         <td className="py-4 px-4 font-mono text-[11px] space-y-0.5">
@@ -788,6 +798,7 @@ export default function FacilityConsolePage({
                 >
                   Cancel
                 </button>
+                <p className="text-xs">{amountPreview(actionAmountGen, "GEN")}</p>
                 <button
                   type="submit"
                   disabled={actionLoading}
@@ -992,6 +1003,7 @@ export default function FacilityConsolePage({
                 >
                   Cancel
                 </button>
+                <p className="text-xs">{covKind === "filing" ? "Calendar quarters; inclusive deadline; latest expired reporting period." : covKind === "ratio" ? "Evidence age: at most120 days; nonnegative figures and positive denominator." : ""}</p>
                 <button
                   type="submit"
                   disabled={actionLoading}
@@ -1056,6 +1068,7 @@ export default function FacilityConsolePage({
                 >
                   Cancel
                 </button>
+                <p className="text-xs">{amountPreview(appealBondGen, "GEN")}</p>
                 <button
                   type="submit"
                   disabled={actionLoading}

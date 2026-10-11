@@ -1,3 +1,4 @@
+import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
 import { clientFor, addresses, sendWrite } from "@/lib/chain";
@@ -55,7 +56,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         String(numeratorLabel).trim(),
         String(denominatorLabel).trim(),
         Number(thresholdBp),
-        BigInt(thresholdAtto),
+        attoInput(thresholdAtto, true),
         String(comparator).trim(),
         Number(testFrequencyHours),
         Number(curePeriodHours),
