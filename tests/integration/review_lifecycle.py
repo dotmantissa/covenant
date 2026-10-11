@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import time
+import urllib.request
 from pathlib import Path
 
 from eth_account import Account
@@ -163,11 +164,14 @@ class ReviewRun:
         save(self.data)
         print("verified", label, json.dumps(facts, default=str), flush=True)
 
-    def verify(self):
+    def verify(self, prefix=""):
         """Independently refresh public receipt proofs after the complete lifecycle."""
         assert "final_settlement" in self.data["checks"], "finish lifecycle first"
         counts = {"contractTransactions": 0, "nativeTransfers": 0}
-        for index, (label, record) in enumerate(self.data["steps"].items(), 1):
+        records = [(label, record) for label, record in self.data["steps"].items()
+                   if label.startswith(prefix)]
+        assert records, "no receipts match this verification prefix"
+        for index, (label, record) in enumerate(records, 1):
             receipt = self.client.get_transaction(record["hash"])
             assert receipt["status_name"] == "FINALIZED", label
             assert receipt.get("leader_only") is False and receipt.get("execution_mode") == "NORMAL", label
@@ -193,7 +197,63 @@ class ReviewRun:
             if index % 10 == 0:
                 print("rechecked", index, "finalized receipts", flush=True)
             time.sleep(2)
-        self.check("receipts_rechecked", counts)
+        self.check(prefix.strip("/") + "_receipts_rechecked" if prefix else "receipts_rechecked", counts)
+
+    def automation(self):
+        """Exercise the hosted signer and durable polling without moving funds."""
+        if "hosted_scheduler_settlement" in self.data["checks"]:
+            return
+        fid = self.data.setdefault("automationFacilityId", "automation-" + self.data["facilityId"])
+        save(self.data)
+        self.write("automation/create", "facilityRegistry", "create_facility", [fid,
+            self.borrower.address, "Scheduler verification borrower", "Unfunded monitoring proof",
+            GEN, 100, 400, "https://ethereum-rpc.publicnode.com",
+            "0x0000000000000000000000000000000000000001", SOURCE_URL])
+        self.write("automation/draft", "facilityRegistry", "add_covenant", [fid,
+            "Maintain at least one wei of native ETH in the agreed Ethereum mainnet treasury.",
+            "treasury", "Scheduled ETH floor", "", "", 0, 1, "gte", 24, 0, 0,
+            "draw_stop", []])
+        digest = self.read("facilityRegistry", "get_covenant", [fid, 0])["terms_digest"]
+        self.write("automation/borrower-approve", "facilityRegistry", "approve_covenant",
+                   [fid, 0, digest], borrower=True)
+        keys = dict(line.split("=", 1) for line in
+                    (ROOT / os.environ.get("REVIEW_KEY_FILE", ".env.review")).read_text().splitlines()
+                    if "=" in line)
+        endpoint = "https://covenant-facilities.vercel.app/api/sweep"
+        observed = list(self.data.get("automationPasses", []))
+        for _ in range(24):
+            request = urllib.request.Request(endpoint, method="POST",
+                headers={"Authorization": "Bearer " + keys["CRON_SECRET"].strip().strip('"')})
+            with urllib.request.urlopen(request, timeout=65) as response:
+                result = json.load(response)
+            observed.append(result)
+            self.data["automationPasses"] = observed
+            save(self.data)
+            matches = [detail for detail in result.get("details", [])
+                       if detail["facilityId"] == fid]
+            if any(detail.get("outcome") == "failed" for detail in matches):
+                raise AssertionError("Hosted scheduler settlement failed; inspect persisted public evidence")
+            completed = next((detail for detail in matches if detail.get("outcome") == "tested"), None)
+            if not completed:
+                # A GitHub scheduled invocation may have finished between retries.
+                with urllib.request.urlopen(endpoint, timeout=30) as response:
+                    history = json.load(response)["sweeps"]
+                completed = next((detail for run in history for detail in run.get("detail", [])
+                                  if detail.get("facilityId") == fid and detail.get("outcome") == "tested"), None)
+            if completed:
+                tx_hash = completed["txHash"]
+                self.step("automation/scheduled-test", lambda: tx_hash)
+                finding = self.read("covenantMonitor", "get_finding", [fid, 0])
+                assert not finding["breached"] and finding["kind"] == "treasury"
+                assert self.read("facilityRegistry", "get_covenant", [fid, 0])["test_count"] == 1
+                assert all(position["facility_id"] != fid for position in
+                           self.read("creditVault", "get_positions"))
+                assert self.balance(self.data["contracts"]["creditVault"]) == 0
+                self.check("hosted_scheduler_settlement", {"facilityId": fid, "txHash": tx_hash,
+                    "finding": finding, "passes": observed, "capitalMovedAtto": "0"})
+                return
+            time.sleep(10)
+        raise AssertionError("Hosted scheduler proof remains pending; rerun automation to resume")
 
     def deploy(self):
         for key, filename, args in [
@@ -389,7 +449,13 @@ class ReviewRun:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=["deploy", "economics", "breach", "resolve", "verify"])
+    parser.add_argument("phase", choices=["deploy", "economics", "breach", "resolve", "automation", "verify"])
+    parser.add_argument("--prefix", default="", help="Refresh only this receipt prefix during verify")
     args = parser.parse_args()
     run = ReviewRun()
-    getattr(run, args.phase)()
+    if args.prefix and args.phase != "verify":
+        parser.error("--prefix applies only to verify")
+    if args.phase == "verify":
+        run.verify(args.prefix)
+    else:
+        getattr(run, args.phase)()

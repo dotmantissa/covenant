@@ -132,3 +132,21 @@ def test_immutable_chain_history_binds_the_complete_appeal(evidence):
             "covenantMonitor": "CovenantMonitor", "creditVault": "CreditVault"}[key]).build_contract(
             contract_address=evidence["contracts"][key]).get_wiring().call()
         assert wiring["wiring_sealed"] is True
+
+
+def test_hosted_scheduler_signed_and_settled_the_due_covenant(evidence):
+    proof = evidence["checks"]["hosted_scheduler_settlement"]
+    assert proof["capitalMovedAtto"] == "0"
+    assert any(item["dueCount"] == 1 for item in proof["passes"])
+    assert any(item["testedCount"] == 1 for item in proof["passes"])
+    client = create_client(chain=studionet)
+    receipt = client.get_transaction(proof["txHash"])
+    assert tx_execution_succeeded(receipt)
+    assert receipt["status_name"] == "FINALIZED"
+    assert receipt["leader_only"] is False and receipt["execution_mode"] == "NORMAL"
+    assert receipt["from_address"].lower() not in {
+        evidence["lender"].lower(), evidence["borrower"].lower()}
+    monitor = get_contract_factory("CovenantMonitor").build_contract(
+        contract_address=evidence["contracts"]["covenantMonitor"])
+    assert monitor.get_finding(args=[proof["facilityId"], 0]).call() == proof["finding"]
+    assert proof["finding"]["kind"] == "treasury" and not proof["finding"]["breached"]

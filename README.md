@@ -207,6 +207,13 @@ python3 tests/integration/review_lifecycle.py verify
 python3 -m pytest tests/integration -v -s
 ```
 
+The optional `automation` phase exercises the actual hosted scheduler signer on an
+unfunded, borrower-approved treasury facility. Include production `CRON_SECRET` in
+the secure reviewer key file. Interrupted passes resume the saved transaction;
+the check confirms finalized descendants and authoritative state without moving
+capital. After the financial receipts have been verified, refresh its new proofs
+with `python3 tests/integration/review_lifecycle.py verify --prefix automation/`.
+
 See [review evidence](evidence/REVIEW.md) and
 [public transaction receipts](evidence/studionet-review.json). The disclosed debt
 and correction are explicitly controlled test evidence, with Git history showing
