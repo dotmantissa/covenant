@@ -42,6 +42,7 @@ def test_deployed_sources_match_repository(evidence):
                         ("covenantMonitor", "covenant_monitor.py"),
                         ("creditVault", "credit_vault.py")]:
         assert hashlib.sha256((ROOT / "contracts" / source).read_bytes()).hexdigest() == evidence["sourceHashes"][key]
+    assert evidence["checks"]["deployed_source_hashes"] == evidence["sourceHashes"]
     assert json.loads((ROOT / "deploy/addresses.json").read_text())["contracts"] == evidence["contracts"]
 
 

@@ -11,6 +11,7 @@ a facility into an enforcement state. Everything else is the lender drafting
 the agreement or either party reading it.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -263,6 +264,7 @@ class FacilityRegistry(gl.Contract):
         self.lender_index.get_or_insert_default(addr_key(lender)).append(key)
         self.borrower_index.get_or_insert_default(addr_key(borrower)).append(key)
 
+        self._publish_facility(key)
         return key
 
     @gl.public.write
@@ -357,6 +359,36 @@ class FacilityRegistry(gl.Contract):
                 "only the borrower can approve a covenant")
         require(facility.status != FACILITY_CLOSED, "this facility is closed")
         self._covenant(facility, covenant_index).borrower_authorized = True
+        self._publish_covenant(facility.facility_id, covenant_index)
+
+    @gl.public.write
+    def sync_agreement(self, facility_id: str) -> None:
+        """Retry immutable terms/consent delivery; effects wait for finalization."""
+        facility = self._facility(facility_id)
+        self._publish_facility(facility.facility_id)
+        for index in range(len(facility.covenants)):
+            if facility.covenants[index].borrower_authorized:
+                self._publish_covenant(facility.facility_id, index)
+
+    def _publish_facility(self, facility_id: str) -> None:
+        terms = self.get_facility(facility_id)
+        terms.pop("covenant_count")
+        terms["status"] = FACILITY_ACTIVE  # mutable enforcement lives in monitor/vault
+        payload = json.dumps(terms, sort_keys=True)
+        for peer in (self.monitor, self.vault):
+            if peer != ZERO_ADDRESS:
+                gl.get_contract_at(peer).emit(on="finalized").receive_facility(payload)
+
+    def _publish_covenant(self, facility_id: str, covenant_index: int) -> None:
+        if self.monitor == ZERO_ADDRESS:
+            return
+        params = self.get_test_parameters(facility_id, covenant_index)
+        params["status"] = COVENANT_UNTESTED
+        params["cure_deadline"] = ""
+        params["facility_status"] = FACILITY_ACTIVE
+        gl.get_contract_at(self.monitor).emit(on="finalized").receive_covenant(
+            facility_id, int(covenant_index), json.dumps(params, sort_keys=True)
+        )
 
     # ----------------------------------------------------------- monitor API
 

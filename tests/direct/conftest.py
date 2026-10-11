@@ -205,6 +205,7 @@ class Wiring:
 
         if "CallContract" in request:
             spec = request["CallContract"]
+            assert spec.get("state") != 1, "Studionet does not implement LATEST_FINAL peer storage"
             self.read_requests.append(dict(spec))
             target = _as_bytes(spec["address"])
             if target not in self.contracts:
@@ -463,6 +464,7 @@ def open_facility(registry, direct_vm, lender, borrower, facility_id=FACILITY_ID
         TREASURY_ACCOUNT,
         FORUM_URL,
     )
+    registry._wiring.drain()
     return facility_id
 
 
@@ -577,6 +579,7 @@ def facility(stack, direct_vm, direct_alice, direct_bob):
     direct_vm.sender = direct_bob
     for index in range(4):
         registry.approve_covenant(FACILITY_ID, index)
+    stack["wiring"].drain()
     return {
         **stack,
         "facility_id": FACILITY_ID,

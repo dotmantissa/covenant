@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from genlayer import *
-from genlayer.py.public_abi import StorageType
 
 ERROR_EXPECTED = "[EXPECTED]"
 ERROR_EXTERNAL = "[EXTERNAL]"
@@ -611,6 +610,8 @@ class NativeRecipient:
 
 class CovenantMonitor(gl.Contract):
     owner: Address
+    agreed_facilities: TreeMap[str, str]
+    agreed_covenants: TreeMap[str, str]
     registry: Address
     vault: Address
     findings: TreeMap[str, Finding]
@@ -631,6 +632,31 @@ class CovenantMonitor(gl.Contract):
         self.vault = ZERO_ADDRESS
         self.test_total = u256(0)
         self.breach_total = u256(0)
+
+    @gl.public.write
+    def receive_facility(self, terms_json: str) -> None:
+        """Only registry's finalized messages may establish agreement terms."""
+        require(gl.message.sender_address == self.registry, "only the registry can deliver agreement")
+        terms = json.loads(terms_json)
+        key = str(terms["facility_id"])
+        if key in self.agreed_facilities:
+            require(self.agreed_facilities[key] == terms_json, "agreement terms are immutable")
+            return
+        self.agreed_facilities[key] = terms_json
+
+    @gl.public.write
+    def receive_covenant(self, facility_id: str, covenant_index: int, params_json: str) -> None:
+        """Persist exact consent only after its registry transaction finalizes."""
+        require(gl.message.sender_address == self.registry, "only the registry can deliver consent")
+        params = json.loads(params_json)
+        require(params["facility_id"] == facility_id and int(params["covenant_index"]) == covenant_index,
+                "consent does not match covenant")
+        require(bool(params["borrower_authorized"]), "covenant is not authorized by borrower")
+        key = finding_key(facility_id, covenant_index)
+        if key in self.agreed_covenants:
+            require(self.agreed_covenants[key] == params_json, "covenant terms are immutable")
+            return
+        self.agreed_covenants[key] = params_json
 
     # ---------------------------------------------------------------- wiring
 
@@ -1007,16 +1033,14 @@ class CovenantMonitor(gl.Contract):
     # ------------------------------------------------------------- plumbing
 
     def _read_parameters(self, facility_id: str, covenant_index: int) -> dict:
-        params = gl.get_contract_at(self.registry).view(state=StorageType.LATEST_FINAL).get_test_parameters(
-            facility_id, int(covenant_index)
-        )
-        require(isinstance(params, dict), "registry returned no parameters")
-        return params
+        key = finding_key(facility_id, covenant_index)
+        require(key in self.agreed_covenants, "covenant is not authorized by borrower; finalized consent delivery pending")
+        return json.loads(self.agreed_covenants[key])
 
     def _read_facility(self, facility_id: str) -> dict:
-        facility = gl.get_contract_at(self.registry).view(state=StorageType.LATEST_FINAL).get_facility(facility_id)
-        require(isinstance(facility, dict), "registry returned no facility")
-        return facility
+        key = facility_id.strip()
+        require(key in self.agreed_facilities, "finalized agreement delivery is pending")
+        return json.loads(self.agreed_facilities[key])
 
     def _persist(self, facility_id, covenant_index, kind, now, reading, status,
                  threshold_bp, consequence) -> None:

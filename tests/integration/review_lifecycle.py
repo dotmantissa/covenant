@@ -6,6 +6,7 @@ contains only public addresses, transaction hashes, receipt outcomes and states.
 No mocks, leader-only execution, or network time manipulation is used.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -16,12 +17,12 @@ from eth_account import Account
 from genlayer_py import create_client
 from genlayer_py.assertions import tx_execution_succeeded
 from genlayer_py.chains import studionet
-from genlayer_py.types import TransactionStatus
+from genlayer_py.types import TransactionHashVariant, TransactionStatus
 
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "evidence/studionet-review.json"
 GEN = 10**18
-EXPLORER = "https://explorer-studio.genlayer.com/transactions/"
+EXPLORER = "https://explorer-studio.genlayer.com/tx/"
 SOURCE_URL = "https://raw.githubusercontent.com/dotmantissa/covenant/main/evidence/appeal-source.md"
 
 
@@ -64,6 +65,8 @@ class ReviewRun:
             "borrower": self.borrower.address, "contracts": {}, "steps": {}, "checks": {},
             "facilityId": "review-" + str(int(time.time())),
         }
+        for record in self.data["steps"].values():
+            record["explorer"] = EXPLORER + record["hash"]
         assert self.data["lender"] == self.lender.address
         assert self.data["borrower"] == self.borrower.address
         save(self.data)
@@ -72,7 +75,8 @@ class ReviewRun:
         return int(self.client.get_balance(address))
 
     def read(self, contract, method, args=None):
-        return self.client.read_contract(self.data["contracts"][contract], method, args=args or [])
+        return self.client.read_contract(self.data["contracts"][contract], method, args=args or [],
+            transaction_hash_variant=TransactionHashVariant.LATEST_FINAL)
 
     def receipt(self, tx_hash):
         return self.client.wait_for_transaction_receipt(tx_hash,
@@ -164,6 +168,12 @@ class ReviewRun:
             "network": "studionet", "chainId": 61999, "deployer": self.lender.address,
             "contracts": contracts, "sourceHashes": self.data["sourceHashes"],
         }, indent=2) + "\n")
+        hashes = {}
+        for key, address in contracts.items():
+            code = self.client.provider.make_request("gen_getContractCode", [address])["result"]
+            hashes[key] = hashlib.sha256(base64.b64decode(code)).hexdigest()
+            assert hashes[key] == self.data["sourceHashes"][key], "chain source differs from repository"
+        self.check("deployed_source_hashes", hashes)
         self.check("wiring", contracts)
 
     def economics(self):
@@ -191,33 +201,37 @@ class ReviewRun:
             assert int(self.data["drawBefore"]["vault"]) - after_v == 100 * GEN
             self.check("draw_settlement", {"borrowerDeltaAtto": str(100 * GEN), "vaultDeltaAtto": str(-100 * GEN)})
         # Wall time while transactions finalize accrues actual integer interest.
-        quote = self.read("creditVault", "quote_outstanding", [fid])
-        assert int(quote["interest_atto"]) > 0, quote
+        if "economic/repay" not in self.data["steps"]:
+            quote = self.read("creditVault", "quote_outstanding", [fid])
+            assert int(quote["interest_atto"]) > 0, quote
         if "economic/repay" not in self.data["steps"]:
             self.data["repayBefore"] = {"borrower": str(self.balance(self.borrower.address)),
                                        "vault": str(self.balance(vault_address))}
             save(self.data)
         self.write("economic/repay", "creditVault", "repay", [fid], 110 * GEN, borrower=True)
-        position = self.read("creditVault", "get_position", [fid])
-        earned = int(self.read("creditVault", "get_interest_collected", [fid])["interest_collected_atto"])
-        assert int(position["drawn_atto"]) == 0 and int(position["interest_accrued_atto"]) == 0
-        assert earned > 0
-        surplus = 110 * GEN - 100 * GEN - earned
-        assert surplus > 0
-        assert self.balance(self.borrower.address) - int(self.data["repayBefore"]["borrower"]) == -110 * GEN + surplus
-        assert self.balance(vault_address) == 100 * GEN + earned
-        self.check("repayment_and_surplus", {"principalAtto": str(100 * GEN),
-                   "earnedInterestAtto": str(earned), "payerSurplusAtto": str(surplus),
-                   "vaultBalanceAtto": str(self.balance(vault_address))})
+        if "repayment_and_surplus" not in self.data["checks"]:
+            position = self.read("creditVault", "get_position", [fid])
+            earned = int(self.read("creditVault", "get_interest_collected", [fid])["interest_collected_atto"])
+            assert int(position["drawn_atto"]) == 0 and int(position["interest_accrued_atto"]) == 0
+            assert earned > 0
+            surplus = 110 * GEN - 100 * GEN - earned
+            assert surplus > 0
+            assert self.balance(self.borrower.address) - int(self.data["repayBefore"]["borrower"]) == -110 * GEN + surplus
+            assert self.balance(vault_address) == 100 * GEN + earned
+            self.check("repayment_and_surplus", {"principalAtto": str(100 * GEN),
+                       "earnedInterestAtto": str(earned), "payerSurplusAtto": str(surplus),
+                       "vaultBalanceAtto": str(self.balance(vault_address))})
+        earned = int(self.data["checks"]["repayment_and_surplus"]["earnedInterestAtto"])
         self.write("economic/unauthorized-interest", "creditVault", "withdraw_interest", [fid, 0], borrower=True, expect_success=False)
         if "economic/withdraw-interest" not in self.data["steps"]:
             self.data["interestBefore"] = str(self.balance(self.lender.address))
             save(self.data)
         self.write("economic/withdraw-interest", "creditVault", "withdraw_interest", [fid, 0])
-        assert self.balance(self.lender.address) - int(self.data["interestBefore"]) == earned
-        assert self.read("creditVault", "get_interest_collected", [fid])["interest_collected_atto"] == "0"
-        assert self.balance(vault_address) == 100 * GEN
-        self.check("interest_settlement", {"lenderDeltaAtto": str(earned), "capitalPreservedAtto": str(100 * GEN)})
+        if "interest_settlement" not in self.data["checks"]:
+            assert self.balance(self.lender.address) - int(self.data["interestBefore"]) == earned
+            assert self.read("creditVault", "get_interest_collected", [fid])["interest_collected_atto"] == "0"
+            assert self.balance(vault_address) == 100 * GEN
+            self.check("interest_settlement", {"lenderDeltaAtto": str(earned), "capitalPreservedAtto": str(100 * GEN)})
         self.write("economic/repeat-interest", "creditVault", "withdraw_interest", [fid, 0], expect_success=False)
 
     def breach(self):
@@ -256,21 +270,23 @@ class ReviewRun:
             self.data["bondBefore"] = str(self.balance(self.borrower.address))
             save(self.data)
         self.write("appeal/resolve", "covenantMonitor", "resolve_appeal", [fid, 0], borrower=True)
-        position = self.read("creditVault", "get_position", [fid])
-        covenant = self.read("facilityRegistry", "get_covenant", [fid, 0])
-        assert not position["accelerated"] and not position["draw_frozen"]
-        assert int(position["drawn_atto"]) == 10 * GEN, "appeal must preserve the debt"
-        assert covenant["appeal_status"] == "overturned"
-        assert self.read("facilityRegistry", "get_facility", [fid])["status"] == "active"
-        assert self.read("covenantMonitor", "get_appeal_bond", [fid, 0]) == "0"
-        assert self.balance(self.borrower.address) - int(self.data["bondBefore"]) == GEN
-        assert self.balance(self.data["contracts"]["covenantMonitor"]) == 0
-        self.check("appeal_reversal_and_refund", {"position": position, "covenant": covenant, "borrowerBondDeltaAtto": str(GEN)})
+        if "appeal_reversal_and_refund" not in self.data["checks"]:
+            position = self.read("creditVault", "get_position", [fid])
+            covenant = self.read("facilityRegistry", "get_covenant", [fid, 0])
+            assert not position["accelerated"] and not position["draw_frozen"]
+            assert int(position["drawn_atto"]) == 10 * GEN, "appeal must preserve the debt"
+            assert covenant["appeal_status"] == "overturned"
+            assert self.read("facilityRegistry", "get_facility", [fid])["status"] == "active"
+            assert self.read("covenantMonitor", "get_appeal_bond", [fid, 0]) == "0"
+            assert self.balance(self.borrower.address) - int(self.data["bondBefore"]) == GEN
+            assert self.balance(self.data["contracts"]["covenantMonitor"]) == 0
+            self.check("appeal_reversal_and_refund", {"position": position, "covenant": covenant, "borrowerBondDeltaAtto": str(GEN)})
         self.write("appeal/repeat-resolution", "covenantMonitor", "resolve_appeal", [fid, 0], expect_success=False)
         self.write("appeal/restored-draw", "creditVault", "draw", [fid, GEN], borrower=True)
-        restored = self.read("creditVault", "get_position", [fid])
-        assert int(restored["drawn_atto"]) == 11 * GEN
-        self.check("restored_rights", restored)
+        if "restored_rights" not in self.data["checks"]:
+            restored = self.read("creditVault", "get_position", [fid])
+            assert int(restored["drawn_atto"]) == 11 * GEN
+            self.check("restored_rights", restored)
         self.write("cleanup/repay", "creditVault", "repay", [fid], 12 * GEN, borrower=True)
         self.write("cleanup/interest", "creditVault", "withdraw_interest", [fid, 0])
         self.write("cleanup/capital", "creditVault", "withdraw_free_capital", [fid, 100 * GEN])

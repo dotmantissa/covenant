@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from genlayer import *
-from genlayer.py.public_abi import StorageType
 
 ERROR_EXPECTED = "[EXPECTED]"
 
@@ -129,6 +128,7 @@ class NativeRecipient:
 
 class CreditVault(gl.Contract):
     owner: Address
+    agreed_facilities: TreeMap[str, str]
     registry: Address
     monitor: Address
     positions: TreeMap[str, Position]
@@ -146,6 +146,17 @@ class CreditVault(gl.Contract):
         self.monitor = ZERO_ADDRESS
         self.total_committed_atto = u256(0)
         self.total_drawn_atto = u256(0)
+
+    @gl.public.write
+    def receive_facility(self, terms_json: str) -> None:
+        """Only registry's finalized messages may establish agreement terms."""
+        require(gl.message.sender_address == self.registry, "only the registry can deliver agreement")
+        terms = json.loads(terms_json)
+        key = str(terms["facility_id"])
+        if key in self.agreed_facilities:
+            require(self.agreed_facilities[key] == terms_json, "agreement terms are immutable")
+            return
+        self.agreed_facilities[key] = terms_json
 
     # ---------------------------------------------------------------- wiring
 
@@ -514,9 +525,9 @@ class CreditVault(gl.Contract):
         return self.positions[key]
 
     def _read_facility(self, facility_id: str) -> dict:
-        facility = gl.get_contract_at(self.registry).view(state=StorageType.LATEST_FINAL).get_facility(facility_id)
-        require(isinstance(facility, dict), "registry returned no facility")
-        return facility
+        key = facility_id.strip()
+        require(key in self.agreed_facilities, "finalized agreement delivery is pending")
+        return json.loads(self.agreed_facilities[key])
 
     def _set_facility_status(self, facility_id: str, status: str, revision: int) -> None:
         if self.registry == ZERO_ADDRESS:
