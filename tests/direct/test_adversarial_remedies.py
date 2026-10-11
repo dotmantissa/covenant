@@ -35,21 +35,21 @@ def test_exact_borrower_consent_and_no_blanket_authorization(funded, direct_vm):
     index = draft(registry, consequence="acceleration")
     assert not registry.get_covenant(FACILITY_ID, index)["borrower_authorized"]
     with direct_vm.expect_revert("not authorized by borrower"):
-        monitor.test_covenant(FACILITY_ID, index)
+        monitor.test_covenant(FACILITY_ID, index, True)
     with direct_vm.expect_revert("only the borrower"):
-        registry.approve_covenant(FACILITY_ID, index)
+        registry.approve_covenant(FACILITY_ID, index, registry.get_covenant(FACILITY_ID, index)["terms_digest"])
         registry._wiring.drain()
     direct_vm.sender = funded["borrower"]
-    registry.approve_covenant(FACILITY_ID, index)
+    registry.approve_covenant(FACILITY_ID, index, registry.get_covenant(FACILITY_ID, index)["terms_digest"])
     registry._wiring.drain()
     assert registry.get_covenant(FACILITY_ID, index)["borrower_authorized"]
     healthy_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, index)
+    monitor.test_covenant(FACILITY_ID, index, True)
     direct_vm.sender = funded["lender"]
     next_index = draft(registry, consequence="acceleration")
     assert not registry.get_covenant(FACILITY_ID, next_index)["borrower_authorized"]
     with direct_vm.expect_revert("not authorized by borrower"):
-        monitor.test_covenant(FACILITY_ID, next_index)
+        monitor.test_covenant(FACILITY_ID, next_index, True)
 
 
 def test_first_covenant_after_funding_requires_consent(stack, direct_vm, direct_alice, direct_bob):
@@ -57,28 +57,28 @@ def test_first_covenant_after_funding_requires_consent(stack, direct_vm, direct_
     commit_capital(stack, direct_vm, direct_alice, PRINCIPAL)
     index = draft(stack["registry"])
     with direct_vm.expect_revert("not authorized by borrower"):
-        stack["monitor"].test_covenant(FACILITY_ID, index)
+        stack["monitor"].test_covenant(FACILITY_ID, index, True)
     assert stack["registry"].due_covenants() == []
 
 
 def test_clean_covenant_cannot_release_another_breach(funded, direct_vm):
     mock_rpc_balance(direct_vm, TREASURY_RPC, 400_000 * GEN)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     healthy_ratio(direct_vm)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     funded["wiring"].drain()
     assert funded["vault"].get_position(FACILITY_ID)["draw_frozen"]
     assert funded["registry"].get_facility(FACILITY_ID)["status"] == "draw_stopped"
     direct_vm.clear_mocks()
     mock_rpc_balance(direct_vm, TREASURY_RPC, 800_000 * GEN)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     funded["wiring"].drain()
     assert not funded["vault"].get_position(FACILITY_ID)["draw_frozen"]
 
 
 def test_queued_breach_blocks_draw_before_delivery(funded, direct_vm):
     prose(direct_vm, holds=False)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     direct_vm.sender = funded["borrower"]
     with direct_vm.expect_revert("enforcement is pending"):
         funded["vault"].draw(FACILITY_ID, GEN)
@@ -87,10 +87,10 @@ def test_queued_breach_blocks_draw_before_delivery(funded, direct_vm):
 def test_reverse_delivery_and_replay_do_not_restore_stale_breach(funded, direct_vm):
     monitor, wiring = funded["monitor"], funded["wiring"]
     mock_rpc_balance(direct_vm, TREASURY_RPC, 400_000 * GEN)
-    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     direct_vm.clear_mocks()
     mock_rpc_balance(direct_vm, TREASURY_RPC, 800_000 * GEN)
-    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     replay = copy.deepcopy(wiring.deferred)
     wiring.deferred.reverse()
     wiring.drain()
@@ -104,9 +104,9 @@ def test_reverse_delivery_and_replay_do_not_restore_stale_breach(funded, direct_
 
 def test_no_capital_yet_preserves_restrictions_and_replays(facility, direct_vm):
     prose(direct_vm, holds=False)
-    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     healthy_ratio(direct_vm)
-    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     facility["wiring"].deferred.reverse()
     facility["wiring"].drain()
     commit_capital(facility, direct_vm, facility["lender"], PRINCIPAL)
@@ -116,10 +116,10 @@ def test_no_capital_yet_preserves_restrictions_and_replays(facility, direct_vm):
 
 def test_cure_clock_cannot_reset_when_registry_is_delayed(funded, direct_vm):
     lean_ratio(direct_vm)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     # No delivery of registry.record_test_result.
     direct_vm.warp("2026-11-05T12:00:00Z")
-    result = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    result = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     assert result["status"] == "breached"
     funded["wiring"].deferred.reverse()
     funded["wiring"].drain()
@@ -128,7 +128,7 @@ def test_cure_clock_cannot_reset_when_registry_is_delayed(funded, direct_vm):
 
 def test_successful_appeal_restores_draws_and_returns_bond_once(funded, direct_vm):
     prose(direct_vm, holds=False)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     # Open appeal even before registry receives finding.
     bond(funded, direct_vm, COVENANT_PROSE)
     direct_vm.clear_mocks()
@@ -156,12 +156,12 @@ def test_appeal_removes_only_disputed_restriction(funded, direct_vm, other):
     direct_vm.sender = funded["lender"]
     index = draft(registry, consequence=other)
     direct_vm.sender = funded["borrower"]
-    registry.approve_covenant(FACILITY_ID, index)
+    registry.approve_covenant(FACILITY_ID, index, registry.get_covenant(FACILITY_ID, index)["terms_digest"])
     registry._wiring.drain()
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, index)
+    monitor.test_covenant(FACILITY_ID, index, True)
     prose(direct_vm, holds=False)
-    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE)
+    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     funded["wiring"].drain()
     bond(funded, direct_vm, COVENANT_PROSE)
     direct_vm.clear_mocks()
@@ -178,7 +178,7 @@ def test_appeal_removes_only_disputed_restriction(funded, direct_vm, other):
 
 def test_lost_child_messages_can_be_retried_without_duplicate_bond(funded, direct_vm):
     prose(direct_vm, holds=False)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     funded["wiring"].deferred.clear()  # lost/failed child messages
     funded["monitor"].sync_enforcement(FACILITY_ID)
     funded["wiring"].drain()
@@ -192,7 +192,7 @@ def test_repayment_cannot_clear_other_acceleration(funded, direct_vm):
     direct_vm.sender = funded["borrower"]
     funded["vault"].draw(FACILITY_ID, GEN)
     prose(direct_vm, holds=False)
-    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     funded["wiring"].drain()
     repay_amount(funded, direct_vm, funded["borrower"], 2 * GEN)
     funded["wiring"].drain()
@@ -259,10 +259,10 @@ def test_caller_rpc_cannot_supply_treasury_facts(stack, direct_vm, direct_alice,
                              url, TREASURY_ACCOUNT, "")
     index = draft(registry, "bad-rpc", kind="treasury")
     direct_vm.sender = direct_bob
-    registry.approve_covenant("bad-rpc", index)
+    registry.approve_covenant("bad-rpc", index, registry.get_covenant('bad-rpc', index)["terms_digest"])
     registry._wiring.drain()
     with direct_vm.expect_revert("approved Ethereum mainnet provider"):
-        stack["monitor"].test_covenant("bad-rpc", index)
+        stack["monitor"].test_covenant("bad-rpc", index, True)
 
 
 def envelope(result):
@@ -282,7 +282,7 @@ def test_treasury_disagreement_and_malformed_results_fail_closed(facility, direc
     mock_rpc_balance(direct_vm, TREASURY_RPC, 800_000 * GEN)
     direct_vm._rpc_overrides = {(SECONDARY_RPC, method): envelope(result)}
     with direct_vm.expect_revert(message):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     assert facility["monitor"].get_wiring()["test_total"] == 0
     assert facility["wiring"].deferred == []
 
@@ -292,7 +292,7 @@ def test_treasury_envelope_rejects_forged_and_error_results(facility, direct_vm,
     mock_rpc_balance(direct_vm, TREASURY_RPC, 800_000 * GEN)
     direct_vm._rpc_overrides = {(SECONDARY_RPC, "eth_getBalance"): document}
     with direct_vm.expect_revert("invalid RPC envelope"):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
 
 
 def test_validator_independently_rejects_forged_balance(facility, direct_vm, helpers, monkeypatch):
@@ -309,7 +309,7 @@ def test_validator_independently_rejects_forged_balance(facility, direct_vm, hel
         return result
 
     monkeypatch.setattr(gl.vm, "run_nondet_unsafe", run)
-    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     assert len(seen) == 1
 
 
@@ -326,7 +326,7 @@ def test_validator_rejects_authenticated_old_finalized_block(facility, direct_vm
         return result
 
     monkeypatch.setattr(gl.vm, "run_nondet_unsafe", run)
-    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     assert seen
 
 
@@ -342,16 +342,16 @@ def test_registry_rejects_unversioned_settlement(facility, direct_vm, as_address
 def test_curing_rate_covenant_preserves_other_draw_stop(funded, direct_vm):
     monitor, wiring, vault = funded["monitor"], funded["wiring"], funded["vault"]
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     direct_vm.warp("2026-11-05T12:00:00Z")
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     mock_rpc_balance(direct_vm, TREASURY_RPC, 400_000 * GEN)
-    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     wiring.drain()
     assert vault.get_position(FACILITY_ID)["current_rate_bp"] == 1250
     direct_vm.clear_mocks()
     healthy_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
     assert vault.get_position(FACILITY_ID)["current_rate_bp"] == 850
     assert vault.get_position(FACILITY_ID)["draw_frozen"]
@@ -360,11 +360,11 @@ def test_curing_rate_covenant_preserves_other_draw_stop(funded, direct_vm):
 def test_clean_ordinary_retest_does_not_make_acceleration_unappealable(funded, direct_vm):
     monitor = funded["monitor"]
     prose(direct_vm, holds=False)
-    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE)
+    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     funded["wiring"].drain()
     direct_vm.clear_mocks()
     prose(direct_vm, holds=True)
-    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE)
+    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     funded["wiring"].drain()
     assert funded["vault"].get_position(FACILITY_ID)["accelerated"]
     bond(funded, direct_vm, COVENANT_PROSE)
@@ -402,15 +402,15 @@ def test_unfinalized_borrower_consent_cannot_authorize_enforcement(funded, direc
     direct_vm.sender = funded["lender"]
     index = draft(registry)
     direct_vm.sender = funded["borrower"]
-    registry.approve_covenant(FACILITY_ID, index)
+    registry.approve_covenant(FACILITY_ID, index, registry.get_covenant(FACILITY_ID, index)["terms_digest"])
     assert registry.get_covenant(FACILITY_ID, index)["borrower_authorized"]
     with direct_vm.expect_revert("not authorized by borrower"):
-        monitor.test_covenant(FACILITY_ID, index)
+        monitor.test_covenant(FACILITY_ID, index, True)
     assert wiring.deferred  # accepted approval has not delivered finalized consent
     assert all(m["on"] == "finalized" for m in wiring.messages)
     wiring.drain()
     healthy_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, index)
+    monitor.test_covenant(FACILITY_ID, index, True)
     assert not any(bytes(r["address"].as_bytes) == registry.address_bytes for r in wiring.read_requests)
 
 
@@ -462,11 +462,11 @@ def test_parties_cannot_forge_finalized_agreement_or_consent(funded, direct_vm):
 def test_retry_agreement_cannot_reset_finding_cure_or_restrictions(funded, direct_vm):
     monitor, registry, wiring = funded["monitor"], funded["registry"], funded["wiring"]
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, 0)
+    monitor.test_covenant(FACILITY_ID, 0, True)
     wiring.drain()
     before = monitor.get_finding(FACILITY_ID, 0)
     direct_vm.warp("2026-11-05T12:00:00Z")
-    monitor.test_covenant(FACILITY_ID, 0)
+    monitor.test_covenant(FACILITY_ID, 0, True)
     wiring.drain()
     restriction = monitor.get_enforcement_state(FACILITY_ID)
     registry.sync_agreement(FACILITY_ID)
@@ -475,7 +475,7 @@ def test_retry_agreement_cannot_reset_finding_cure_or_restrictions(funded, direc
     wiring.drain()
     assert monitor.get_enforcement_state(FACILITY_ID) == restriction
     lean_ratio(direct_vm)
-    result = monitor.test_covenant(FACILITY_ID, 0)
+    result = monitor.test_covenant(FACILITY_ID, 0, True)
     assert result["status"] == "breached"
     assert before["status"] == "breach_pending_cure"
 
@@ -486,22 +486,22 @@ def test_lost_consent_can_be_recovered_without_blanket_authorization(funded, dir
     index = draft(registry)
     unapproved = draft(registry)
     direct_vm.sender = funded["borrower"]
-    registry.approve_covenant(FACILITY_ID, index)
+    registry.approve_covenant(FACILITY_ID, index, registry.get_covenant(FACILITY_ID, index)["terms_digest"])
     wiring.deferred.clear()  # dropped finalized message
     with direct_vm.expect_revert("not authorized by borrower"):
-        monitor.test_covenant(FACILITY_ID, index)
+        monitor.test_covenant(FACILITY_ID, index, True)
     registry.sync_agreement(FACILITY_ID)
     wiring.drain()
     healthy_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, index)
+    monitor.test_covenant(FACILITY_ID, index, True)
     with direct_vm.expect_revert("not authorized by borrower"):
-        monitor.test_covenant(FACILITY_ID, unapproved)
+        monitor.test_covenant(FACILITY_ID, unapproved, True)
 
 
 def test_accepted_clean_appeal_cannot_grant_draw_before_finalized_settlement(funded, direct_vm):
     monitor, vault, wiring = funded["monitor"], funded["vault"], funded["wiring"]
     prose(direct_vm, holds=False)
-    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE)
+    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     # The breach child has not reached the vault. A later accepted appeal is clean.
     bond(funded, direct_vm, COVENANT_PROSE)
     direct_vm.clear_mocks()

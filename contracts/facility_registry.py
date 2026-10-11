@@ -12,6 +12,7 @@ the agreement or either party reading it.
 """
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -174,6 +175,7 @@ class Facility:
 
 class FacilityRegistry(gl.Contract):
     owner: Address
+    wiring_sealed: bool
     monitor: Address
     vault: Address
     facilities: TreeMap[str, Facility]
@@ -187,6 +189,7 @@ class FacilityRegistry(gl.Contract):
 
     def __init__(self) -> None:
         self.owner = gl.message.sender_address
+        self.wiring_sealed = False
         self.monitor = ZERO_ADDRESS
         self.vault = ZERO_ADDRESS
         self.facility_count = u256(0)
@@ -196,17 +199,28 @@ class FacilityRegistry(gl.Contract):
     @gl.public.write
     def set_monitor(self, monitor_address: str) -> None:
         require(gl.message.sender_address == self.owner, "only the owner can set the monitor")
+        require(not self.wiring_sealed or Address(monitor_address) == self.monitor, "contract wiring is sealed")
+        require(Address(monitor_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.monitor = Address(monitor_address)
 
     @gl.public.write
     def set_vault(self, vault_address: str) -> None:
         require(gl.message.sender_address == self.owner, "only the owner can set the vault")
+        require(not self.wiring_sealed or Address(vault_address) == self.vault, "contract wiring is sealed")
+        require(Address(vault_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.vault = Address(vault_address)
+
+    @gl.public.write
+    def seal_wiring(self) -> None:
+        require(gl.message.sender_address == self.owner, "only the owner can seal wiring")
+        require(self.monitor != ZERO_ADDRESS and self.vault != ZERO_ADDRESS, "configure both peers first")
+        self.wiring_sealed = True
 
     @gl.public.view
     def get_wiring(self) -> dict:
         return {
             "owner": self.owner.as_hex,
+            "wiring_sealed": self.wiring_sealed,
             "monitor": self.monitor.as_hex,
             "vault": self.vault.as_hex,
             "facility_count": int(self.facility_count),
@@ -233,7 +247,7 @@ class FacilityRegistry(gl.Contract):
         require(key not in self.facilities, f"facility {key} already exists")
         require(len(borrower_name.strip()) > 0, "borrower name cannot be empty")
         require(int(principal_atto) > 0, "principal must be greater than zero")
-        require(int(rate_bp) > 0, "rate must be greater than zero")
+        require(0 < int(rate_bp) <= 100000 and 0 <= int(step_up_bp) <= 100000, "rate must be greater than zero and within100000bp")
         require(int(step_up_bp) >= 0, "step up cannot be negative")
 
         lender = gl.message.sender_address
@@ -241,6 +255,7 @@ class FacilityRegistry(gl.Contract):
         require(borrower != ZERO_ADDRESS, "borrower address cannot be empty")
         require(borrower != lender, "a facility needs two different parties")
 
+        self.wiring_sealed = True
         self.facilities[key] = Facility(
             facility_id=key,
             lender=lender,
@@ -298,8 +313,8 @@ class FacilityRegistry(gl.Contract):
             breach_consequence in VALID_CONSEQUENCES,
             f"unknown consequence {breach_consequence}",
         )
-        require(int(test_frequency_hours) > 0, "test frequency must be positive")
-        require(int(cure_period_hours) >= 0, "cure period cannot be negative")
+        require(0 < int(test_frequency_hours) <= 8760, "test frequency must be positive and within one year")
+        require(0 <= int(cure_period_hours) <= 8760, "cure period cannot be negative or exceed one year")
 
         urls = [u.strip() for u in source_urls if len(u.strip()) > 0]
         if kind in (KIND_RATIO, KIND_FILING, KIND_PROSE):
@@ -352,12 +367,13 @@ class FacilityRegistry(gl.Contract):
         return len(facility.covenants) - 1
 
     @gl.public.write
-    def approve_covenant(self, facility_id: str, covenant_index: int) -> None:
+    def approve_covenant(self, facility_id: str, covenant_index: int, terms_digest: str) -> None:
         """Accept this immutable covenant's exact terms, including its sources."""
         facility = self._facility(facility_id)
         require(gl.message.sender_address == facility.borrower,
                 "only the borrower can approve a covenant")
         require(facility.status != FACILITY_CLOSED, "this facility is closed")
+        require(terms_digest == self._terms_digest(facility, covenant_index), "covenant terms digest does not match")
         self._covenant(facility, covenant_index).borrower_authorized = True
         self._publish_covenant(facility.facility_id, covenant_index)
 
@@ -441,6 +457,8 @@ class FacilityRegistry(gl.Contract):
                 covenant.breach_count = u256(int(covenant.breach_count) + 1)
         else:
             covenant.cure_deadline = ""
+        if status == COVENANT_PENDING_CURE and covenant.cure_deadline:
+            covenant.next_due_at = min(covenant.next_due_at, covenant.cure_deadline)
 
     @gl.public.write
     def record_appeal(
@@ -467,6 +485,8 @@ class FacilityRegistry(gl.Contract):
             self.appeal_revisions[key] = u256(revision)
         covenant.appeal_status = appeal_status
         covenant.appeal_bond_atto = u256(int(bond_atto))
+        if appeal_status == APPEAL_OPEN:
+            covenant.next_due_at = block_now()
 
     @gl.public.write
     def set_facility_status(self, facility_id: str, status: str, revision: int) -> None:
@@ -508,13 +528,15 @@ class FacilityRegistry(gl.Contract):
     def get_covenant(self, facility_id: str, covenant_index: int) -> dict:
         facility = self._facility(facility_id)
         covenant = self._covenant(facility, covenant_index)
-        return self._covenant_dict(covenant, int(covenant_index))
+        result = self._covenant_dict(covenant, int(covenant_index))
+        result["terms_digest"] = self._terms_digest(facility, covenant_index)
+        return result
 
     @gl.public.view
     def get_covenants(self, facility_id: str) -> list:
         facility = self._facility(facility_id)
         return [
-            self._covenant_dict(facility.covenants[i], i)
+            self.get_covenant(facility_id, i)
             for i in range(len(facility.covenants))
         ]
 
@@ -538,13 +560,17 @@ class FacilityRegistry(gl.Contract):
             "threshold_bp": int(covenant.threshold_bp),
             "threshold_atto": str(int(covenant.threshold_atto)),
             "comparator": covenant.comparator,
+            "test_frequency_hours": int(covenant.test_frequency_hours),
             "cure_period_hours": int(covenant.cure_period_hours),
             "filing_deadline_days": int(covenant.filing_deadline_days),
             "breach_consequence": covenant.breach_consequence,
             "source_urls": [covenant.source_urls[i] for i in range(len(covenant.source_urls))],
+            "evidence_max_age_days": 120,
+            "reporting_schedule": "calendar_quarterly" if covenant.kind == KIND_FILING else "",
             "status": covenant.status,
             "cure_deadline": covenant.cure_deadline,
             "borrower_authorized": bool(covenant.borrower_authorized),
+            "terms_digest": self._terms_digest(facility, covenant_index),
         }
 
     @gl.public.view
@@ -579,7 +605,7 @@ class FacilityRegistry(gl.Contract):
                 continue
             for index in range(len(facility.covenants)):
                 covenant = facility.covenants[index]
-                if not covenant.borrower_authorized or covenant.status == COVENANT_BREACHED:
+                if not covenant.borrower_authorized:
                     continue
                 if len(covenant.next_due_at) == 0 or covenant.next_due_at <= now:
                     due.append(
@@ -590,6 +616,7 @@ class FacilityRegistry(gl.Contract):
                             "metric": covenant.metric,
                             "next_due_at": covenant.next_due_at,
                             "status": covenant.status,
+                            "action": "resolve_appeal" if covenant.appeal_status == APPEAL_OPEN else "test_covenant",
                         }
                     )
         return due
@@ -641,6 +668,19 @@ class FacilityRegistry(gl.Contract):
         )
         return facility.covenants[index]
 
+    def _terms_digest(self, facility: Facility, index: int) -> str:
+        covenant = self._covenant(facility, index)
+        fields = ["text", "kind", "metric", "numerator_label", "denominator_label", "threshold_bp",
+                  "threshold_atto", "comparator", "test_frequency_hours", "cure_period_hours",
+                  "filing_deadline_days", "breach_consequence", "source_urls", "evidence_max_age_days", "reporting_schedule"]
+        record = self._covenant_dict(covenant, int(index))
+        terms = {field: record[field] for field in fields}
+        terms["facility"] = {"registry": gl.message.contract_address.as_hex, "id": facility.facility_id,
+                             "index": int(index), "lender": facility.lender.as_hex, "borrower": facility.borrower.as_hex,
+                             "principal_atto": str(int(facility.principal_atto)), "rate_bp": int(facility.rate_bp),
+                             "step_up_bp": int(facility.step_up_bp), "treasury_address": facility.treasury_address}
+        return hashlib.sha256(json.dumps(terms, sort_keys=True).encode("utf-8")).hexdigest()
+
     def _covenant_dict(self, covenant: Covenant, index: int) -> dict:
         return {
             "covenant_index": index,
@@ -657,6 +697,8 @@ class FacilityRegistry(gl.Contract):
             "filing_deadline_days": int(covenant.filing_deadline_days),
             "breach_consequence": covenant.breach_consequence,
             "source_urls": [covenant.source_urls[i] for i in range(len(covenant.source_urls))],
+            "evidence_max_age_days": 120,
+            "reporting_schedule": "calendar_quarterly" if covenant.kind == KIND_FILING else "",
             "status": covenant.status,
             "observed_bp": int(covenant.observed_bp),
             "observed_atto": str(int(covenant.observed_atto)),

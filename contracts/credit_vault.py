@@ -128,6 +128,7 @@ class NativeRecipient:
 
 class CreditVault(gl.Contract):
     owner: Address
+    wiring_sealed: bool
     agreed_facilities: TreeMap[str, str]
     registry: Address
     monitor: Address
@@ -144,6 +145,9 @@ class CreditVault(gl.Contract):
 
     def __init__(self, registry_address: str) -> None:
         self.owner = gl.message.sender_address
+        self.wiring_sealed = False
+        require(not self.wiring_sealed or Address(registry_address) == self.registry, "contract wiring is sealed")
+        require(Address(registry_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.registry = Address(registry_address)
         self.monitor = ZERO_ADDRESS
         self.total_committed_atto = u256(0)
@@ -158,6 +162,8 @@ class CreditVault(gl.Contract):
         if key in self.agreed_facilities:
             require(self.agreed_facilities[key] == terms_json, "agreement terms are immutable")
             return
+        require(self.monitor != ZERO_ADDRESS, "configure peers before receiving agreements")
+        self.wiring_sealed = True
         self.agreed_facilities[key] = terms_json
 
     # ---------------------------------------------------------------- wiring
@@ -165,17 +171,28 @@ class CreditVault(gl.Contract):
     @gl.public.write
     def set_monitor(self, monitor_address: str) -> None:
         require(gl.message.sender_address == self.owner, "only the owner can set the monitor")
+        require(not self.wiring_sealed or Address(monitor_address) == self.monitor, "contract wiring is sealed")
+        require(Address(monitor_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.monitor = Address(monitor_address)
 
     @gl.public.write
     def set_registry(self, registry_address: str) -> None:
         require(gl.message.sender_address == self.owner, "only the owner can set the registry")
+        require(not self.wiring_sealed or Address(registry_address) == self.registry, "contract wiring is sealed")
+        require(Address(registry_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.registry = Address(registry_address)
+
+    @gl.public.write
+    def seal_wiring(self) -> None:
+        require(gl.message.sender_address == self.owner, "only the owner can seal wiring")
+        require(self.registry != ZERO_ADDRESS and self.monitor != ZERO_ADDRESS, "configure both peers first")
+        self.wiring_sealed = True
 
     @gl.public.view
     def get_wiring(self) -> dict:
         return {
             "owner": self.owner.as_hex,
+            "wiring_sealed": self.wiring_sealed,
             "registry": self.registry.as_hex,
             "monitor": self.monitor.as_hex,
             "balance_atto": str(int(self.balance)),

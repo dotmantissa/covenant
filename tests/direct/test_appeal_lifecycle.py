@@ -25,7 +25,7 @@ def test_only_borrower_can_appeal(facility, direct_vm):
 
     # 1. Trip covenant into breach_pending_cure
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     # 2. Lender cannot appeal
@@ -48,7 +48,7 @@ def test_cannot_appeal_compliant_covenant(facility, direct_vm):
     borrower = facility["borrower"]
 
     healthy_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     direct_vm.sender = borrower
@@ -64,7 +64,7 @@ def test_cannot_appeal_with_zero_bond(facility, direct_vm):
     borrower = facility["borrower"]
 
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     direct_vm.sender = borrower
@@ -81,7 +81,7 @@ def test_appeal_open_state_and_polling(facility, direct_vm):
 
     # Trip covenant
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     # Borrower posts 1 GEN bond
@@ -105,19 +105,12 @@ def test_appeal_open_state_and_polling(facility, direct_vm):
     assert cov["appeal_status"] == "open"
     assert cov["appeal_bond_atto"] == str(bond_1)
 
-    # Stacking bond: borrower adds another 0.5 GEN
-    bond_2 = 5 * 10**17
-    direct_vm.value = bond_2
-    wiring.credit(monitor.address_bytes, bond_2)
-    res2 = monitor.appeal_breach(FACILITY_ID, COVENANT_RATIO)
-
-    total_bond = bond_1 + bond_2
-    assert res2["bond_atto"] == str(total_bond)
-    assert monitor.get_appeal_bond(FACILITY_ID, COVENANT_RATIO) == str(total_bond)
-
-    wiring.drain()
-    cov2 = registry.get_covenant(FACILITY_ID, COVENANT_RATIO)
-    assert cov2["appeal_bond_atto"] == str(total_bond)
+    # A pending appeal cannot collect a second bond through a repeated request.
+    direct_vm.value = 5 * 10**17
+    with direct_vm.expect_revert("an appeal is already open"):
+        monitor.appeal_breach(FACILITY_ID, COVENANT_RATIO)
+    direct_vm.value = 0
+    assert monitor.get_appeal_bond(FACILITY_ID, COVENANT_RATIO) == str(bond_1)
 
 
 def test_resolve_appeal_upheld_awards_bond_to_lender(facility, direct_vm):
@@ -129,7 +122,7 @@ def test_resolve_appeal_upheld_awards_bond_to_lender(facility, direct_vm):
 
     # Trip covenant
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     # Borrower appeals with 2 GEN bond
@@ -178,7 +171,7 @@ def test_resolve_appeal_overturned_refunds_borrower_and_cures(funded, direct_vm)
 
     # 1. Trip covenant: treasury drops below 600,000 GEN threshold
     mock_rpc_balance(direct_vm, TREASURY_RPC, 400_000 * GEN)
-    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    monitor.test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     wiring.drain()
 
     # Vault enforces draw stop

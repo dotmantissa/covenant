@@ -124,7 +124,7 @@ def prose(direct_vm, holds=True):
 
 def test_a_healthy_ratio_reads_as_compliant(facility, direct_vm):
     healthy_ratio(direct_vm)
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
     assert outcome["status"] == "compliant"
     assert outcome["breached"] is False
@@ -139,7 +139,7 @@ def test_the_ratio_comes_from_sandboxed_arithmetic_not_the_model(facility, direc
     # The model is handed figures whose ratio it never states. If the contract
     # were taking a verdict from the model this would not line up.
     healthy_ratio(direct_vm, numerator="1,440,000", denominator="1,200,000")
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
     assert outcome["observed_bp"] == 12000
     assert outcome["breached"] is False  # exactly on the 1.2x test, which passes
@@ -147,7 +147,7 @@ def test_the_ratio_comes_from_sandboxed_arithmetic_not_the_model(facility, direc
 
 def test_a_thin_ratio_opens_a_cure_window_rather_than_a_breach(facility, direct_vm):
     lean_ratio(direct_vm)
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
     assert outcome["observed_bp"] == 9000
     assert outcome["breached"] is True
@@ -165,14 +165,14 @@ def test_a_ratio_still_offside_after_the_cure_window_becomes_a_breach(
 
     direct_vm.warp("2026-10-05T12:00:00Z")
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
     assert registry.get_covenant(FACILITY_ID, COVENANT_RATIO)["status"] == "breach_pending_cure"
 
     # The covenant allows 336 hours to cure. Come back after that.
     direct_vm.warp("2026-11-01T12:00:00Z")
     lean_ratio(direct_vm)
-    outcome = monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    outcome = monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     assert outcome["status"] == "breached"
@@ -186,13 +186,13 @@ def test_recovering_inside_the_cure_window_clears_the_covenant(facility, direct_
 
     direct_vm.warp("2026-10-05T12:00:00Z")
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     direct_vm.warp("2026-10-12T12:00:00Z")
     direct_vm.clear_mocks()
     healthy_ratio(direct_vm)
-    outcome = monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    outcome = monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     wiring.drain()
 
     assert outcome["status"] == "cured"
@@ -215,7 +215,7 @@ def test_figures_written_the_way_people_write_them_still_parse(
     facility, direct_vm, written, expected_milli
 ):
     healthy_ratio(direct_vm, numerator=written, denominator="1200000")
-    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     finding = facility["monitor"].get_finding(FACILITY_ID, COVENANT_RATIO)
     assert finding["numerator_milli"] == str(expected_milli)
 
@@ -227,13 +227,13 @@ def test_a_model_that_cannot_find_the_figures_fails_the_test(facility, direct_vm
         {"numerator": None, "denominator": None, "notes": "Neither figure is published."},
     )
     with direct_vm.expect_revert("could not find both figures"):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
 
 def test_a_zero_denominator_is_refused_rather_than_dividing_by_it(facility, direct_vm):
     healthy_ratio(direct_vm, numerator="1560000", denominator="0")
     with direct_vm.expect_revert("denominator came back as zero"):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
 
 def test_a_failing_source_is_reported_as_a_server_problem(facility, direct_vm):
@@ -245,7 +245,7 @@ def test_a_failing_source_is_reported_as_a_server_problem(facility, direct_vm):
     # endpoint to exercise the status handling path.
     facility["registry"]
     with pytest.raises(Exception):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
 
 # ----------------------------------------------------------- filing covenant
@@ -254,7 +254,7 @@ def test_a_failing_source_is_reported_as_a_server_problem(facility, direct_vm):
 def test_a_report_filed_inside_the_deadline_is_compliant(facility, direct_vm):
     direct_vm.warp("2026-08-20T00:00:00Z")
     filing(direct_vm, published_at="2026-08-10")
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_FILING)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_FILING, True)
 
     assert outcome["status"] == "compliant"
     assert outcome["observed_bp"] == 41  # days between period end and publication
@@ -264,7 +264,7 @@ def test_a_report_filed_inside_the_deadline_is_compliant(facility, direct_vm):
 def test_a_late_report_stops_draws_straight_away(funded, direct_vm):
     direct_vm.warp("2026-09-25T00:00:00Z")
     filing(direct_vm, published_at="2026-09-20")
-    outcome = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_FILING)
+    outcome = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_FILING, True)
     funded["wiring"].drain()
 
     assert outcome["breached"] is True
@@ -287,7 +287,7 @@ def test_a_report_that_never_arrived_is_measured_against_today(facility, direct_
             "notes": "No Q2 report has been posted.",
         },
     )
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_FILING)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_FILING, True)
 
     assert outcome["breached"] is True
     assert "No report published" in outcome["narrative"]
@@ -299,7 +299,7 @@ def test_a_report_that_never_arrived_is_measured_against_today(facility, direct_
 
 def test_a_promise_with_nothing_against_it_holds(facility, direct_vm):
     prose(direct_vm, holds=True)
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
 
     assert outcome["status"] == "compliant"
     assert outcome["breached"] is False
@@ -308,7 +308,7 @@ def test_a_promise_with_nothing_against_it_holds(facility, direct_vm):
 
 def test_new_senior_debt_accelerates_the_facility(funded, direct_vm):
     prose(direct_vm, holds=False)
-    outcome = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    outcome = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     funded["wiring"].drain()
 
     # This covenant carries no cure period, so the breach is immediate.
@@ -329,7 +329,7 @@ def test_a_verdict_with_no_artifact_behind_it_is_rejected(facility, direct_vm):
         {"holds": False, "reasoning": "It feels like they took on debt somewhere."},
     )
     with direct_vm.expect_revert("verdict given with no artifact cited"):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
 
 
 @pytest.mark.parametrize("written,expected", [("yes", True), ("no", False),
@@ -341,7 +341,7 @@ def test_a_verdict_written_as_a_word_is_understood(facility, direct_vm, written,
         {"holds": written, "artifact_id": "HIP-40", "citation": FORUM_URL,
          "reasoning": "Checked the passed proposals."},
     )
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
     assert outcome["breached"] is not expected
 
 
@@ -352,7 +352,7 @@ def test_an_unreadable_verdict_is_refused(facility, direct_vm):
         {"holds": "probably fine", "artifact_id": "HIP-40", "citation": FORUM_URL},
     )
     with direct_vm.expect_revert("cannot read verdict"):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_PROSE, True)
 
 
 # --------------------------------------------------------- treasury covenant
@@ -360,7 +360,7 @@ def test_an_unreadable_verdict_is_refused(facility, direct_vm):
 
 def test_a_treasury_above_the_floor_is_compliant(facility, direct_vm):
     mock_rpc_balance(direct_vm, TREASURY_RPC, 700_000 * GEN)
-    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    outcome = facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
 
     assert outcome["status"] == "compliant"
     assert outcome["observed_atto"] == str(700_000 * GEN)
@@ -369,7 +369,7 @@ def test_a_treasury_above_the_floor_is_compliant(facility, direct_vm):
 
 def test_a_treasury_below_the_floor_stops_draws(funded, direct_vm):
     mock_rpc_balance(direct_vm, TREASURY_RPC, 450_000 * GEN)
-    outcome = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+    outcome = funded["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
     funded["wiring"].drain()
 
     assert outcome["breached"] is True
@@ -381,7 +381,7 @@ def test_a_treasury_below_the_floor_stops_draws(funded, direct_vm):
 def test_an_rpc_error_is_surfaced_rather_than_guessed_at(facility, direct_vm):
     mock_rpc_error(direct_vm, TREASURY_RPC)
     with direct_vm.expect_revert("invalid RPC envelope"):
-        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
+        facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY, True)
 
 
 # ------------------------------------------------------------ the audit trail
@@ -389,7 +389,7 @@ def test_an_rpc_error_is_surfaced_rather_than_guessed_at(facility, direct_vm):
 
 def test_every_test_is_kept_with_what_it_relied_on(facility, direct_vm):
     healthy_ratio(direct_vm)
-    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO)
+    facility["monitor"].test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
     finding = facility["monitor"].get_finding(FACILITY_ID, COVENANT_RATIO)
     assert finding["kind"] == "ratio"
@@ -408,12 +408,12 @@ def test_every_test_is_kept_with_what_it_relied_on(facility, direct_vm):
 def test_a_retest_replaces_the_finding_and_counts_the_breach(facility, direct_vm):
     monitor = facility["monitor"]
     healthy_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
     facility["wiring"].drain()
 
     direct_vm.clear_mocks()
     lean_ratio(direct_vm)
-    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO)
+    monitor.test_covenant(FACILITY_ID, COVENANT_RATIO, True)
 
     assert monitor.get_finding(FACILITY_ID, COVENANT_RATIO)["observed_bp"] == 9000
     assert monitor.get_wiring()["test_total"] == 2

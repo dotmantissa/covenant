@@ -638,6 +638,7 @@ class NativeRecipient:
 
 class CovenantMonitor(gl.Contract):
     owner: Address
+    wiring_sealed: bool
     agreed_facilities: TreeMap[str, str]
     agreed_covenants: TreeMap[str, str]
     registry: Address
@@ -655,9 +656,13 @@ class CovenantMonitor(gl.Contract):
     appeal_outcomes: TreeMap[str, str]
     enforcement_history: TreeMap[str, str]
     test_history: TreeMap[str, str]
+    next_due: TreeMap[str, str]
 
     def __init__(self, registry_address: str) -> None:
         self.owner = gl.message.sender_address
+        self.wiring_sealed = False
+        require(not self.wiring_sealed or Address(registry_address) == self.registry, "contract wiring is sealed")
+        require(Address(registry_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.registry = Address(registry_address)
         self.vault = ZERO_ADDRESS
         self.test_total = u256(0)
@@ -672,6 +677,8 @@ class CovenantMonitor(gl.Contract):
         if key in self.agreed_facilities:
             require(self.agreed_facilities[key] == terms_json, "agreement terms are immutable")
             return
+        require(self.vault != ZERO_ADDRESS, "configure peers before receiving agreements")
+        self.wiring_sealed = True
         self.agreed_facilities[key] = terms_json
 
     @gl.public.write
@@ -693,17 +700,28 @@ class CovenantMonitor(gl.Contract):
     @gl.public.write
     def set_vault(self, vault_address: str) -> None:
         require(gl.message.sender_address == self.owner, "only the owner can set the vault")
+        require(not self.wiring_sealed or Address(vault_address) == self.vault, "contract wiring is sealed")
+        require(Address(vault_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.vault = Address(vault_address)
 
     @gl.public.write
     def set_registry(self, registry_address: str) -> None:
         require(gl.message.sender_address == self.owner, "only the owner can set the registry")
+        require(not self.wiring_sealed or Address(registry_address) == self.registry, "contract wiring is sealed")
+        require(Address(registry_address) != ZERO_ADDRESS, "peer address cannot be empty")
         self.registry = Address(registry_address)
+
+    @gl.public.write
+    def seal_wiring(self) -> None:
+        require(gl.message.sender_address == self.owner, "only the owner can seal wiring")
+        require(self.registry != ZERO_ADDRESS and self.vault != ZERO_ADDRESS, "configure both peers first")
+        self.wiring_sealed = True
 
     @gl.public.view
     def get_wiring(self) -> dict:
         return {
             "owner": self.owner.as_hex,
+            "wiring_sealed": self.wiring_sealed,
             "registry": self.registry.as_hex,
             "vault": self.vault.as_hex,
             "test_total": int(self.test_total),
@@ -713,7 +731,7 @@ class CovenantMonitor(gl.Contract):
     # ------------------------------------------------------------- the test
 
     @gl.public.write
-    def test_covenant(self, facility_id: str, covenant_index: int) -> dict:
+    def test_covenant(self, facility_id: str, covenant_index: int, manual: bool = False) -> dict:
         """Run one covenant test and act on the outcome.
 
         Cross-contract reads happen before the non-deterministic block and
@@ -722,6 +740,11 @@ class CovenantMonitor(gl.Contract):
         key = finding_key(facility_id.strip(), covenant_index)
         require(int(self.appeal_bonds.get(key, u256(0))) == 0,
                 "resolve the open appeal before ordinary retesting")
+        self._read_parameters(facility_id.strip(), covenant_index)
+        if block_now() < self.next_due.get(key, ""):
+            facility = self._read_facility(facility_id)
+            require(manual and gl.message.sender_address in (Address(facility["lender"]), Address(facility["borrower"])),
+                    "covenant test is not due; only a party may explicitly request an early test")
         return self._test_covenant(facility_id.strip(), covenant_index, False)
 
     def _test_covenant(self, facility_id: str, covenant_index: int, under_appeal: bool) -> dict:
@@ -788,6 +811,9 @@ class CovenantMonitor(gl.Contract):
         self.restrictions[key] = consequence
         self._persist(facility_id, covenant_index, kind, now, reading, status,
                       threshold_bp, consequence)
+        self.next_due[key] = shift_hours(now, int(params["test_frequency_hours"]))
+        if status == COVENANT_PENDING_CURE:
+            self.next_due[key] = min(self.next_due[key], self.cure_deadlines[key])
         snapshot = self._finding_dict(self.findings[key])
         snapshot["under_appeal"] = under_appeal
         self.test_history[str(int(self.test_total))] = json.dumps(snapshot, sort_keys=True)
@@ -822,6 +848,7 @@ class CovenantMonitor(gl.Contract):
         )
         bond = int(gl.message.value)
         require(bond > 0, "an appeal needs a bond")
+        require(int(self.appeal_bonds.get(key, u256(0))) == 0, "an appeal is already open")
 
         key = finding_key(facility_id, covenant_index)
         self.appeal_bonds[key] = u256(int(self.appeal_bonds.get(key, u256(0))) + bond)

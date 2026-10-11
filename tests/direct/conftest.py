@@ -578,7 +578,7 @@ def facility(stack, direct_vm, direct_alice, direct_bob):
     draft_covenants(registry, direct_vm, direct_alice)
     direct_vm.sender = direct_bob
     for index in range(4):
-        registry.approve_covenant(FACILITY_ID, index)
+        registry.approve_covenant(FACILITY_ID, index, registry.get_covenant(FACILITY_ID,index)["terms_digest"])
     stack["wiring"].drain()
     return {
         **stack,
