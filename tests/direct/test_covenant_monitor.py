@@ -31,7 +31,7 @@ Figures as of 30 September 2026.
 LEAN_REVENUE_PAGE = """Harbour DAO treasury dashboard
 Annualised protocol revenue: 1,080,000 USDC
 Annual debt service: 1,200,000 USDC
-Figures as of 31 October 2026.
+Figures as of 30 September 2026.
 """
 
 REPORTS_PAGE = """Harbour DAO transparency reports
@@ -75,7 +75,7 @@ def lean_ratio(direct_vm, numerator="1080000", denominator="1200000"):
             "unit": "USDC",
             "citation": REVENUE_URL,
             "locator": "Annualised protocol revenue",
-            "as_of": "2026-10-31",
+            "as_of": "2026-09-30",
             "notes": "Revenue fell against a flat debt service.",
         },
     )

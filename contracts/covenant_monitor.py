@@ -21,6 +21,7 @@ Treasury covenants skip the LLM entirely: they read chain state over RPC under
 """
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -189,7 +190,11 @@ def normalise_citation(value: object) -> str:
     the incidental differences (case, spacing, trailing punctuation, tracking
     query strings) while keeping the identifying part.
     """
-    text = str(value or "").strip().lower()
+    text = str(value or "").strip()
+    if "://" in text:
+        scheme, rest = text.split("://", 1)
+        host, sep, path = rest.partition("/")
+        text = scheme.lower() + "://" + host.lower() + sep + path
     text = text.split("#")[0]
     if "?" in text:
         head, _, tail = text.partition("?")
@@ -203,6 +208,39 @@ def normalise_citation(value: object) -> str:
     text = re.sub(r"^www\.", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.rstrip("/ .,;:")
+
+
+def canonical_date(value: object, optional: bool = False) -> str:
+    text = str(value or "").strip()
+    if optional and not text:
+        return ""
+    try:
+        return parse_iso(text).strftime("%Y-%m-%d")
+    except Exception:
+        raise gl.vm.UserError(f"{ERROR_LLM} invalid evidence date")
+
+
+def required_quarter_end(now: str, deadline_days: int) -> str:
+    """Latest calendar quarter whose inclusive filing deadline has expired."""
+    today = parse_iso(canonical_date(now))
+    start_month = ((today.month - 1) // 3) * 3 + 1
+    end = datetime(today.year, start_month, 1, tzinfo=timezone.utc) - timedelta(days=1)
+    while days_between(format_iso(end), format_iso(today)) <= deadline_days:
+        start_month = ((end.month - 1) // 3) * 3 + 1
+        end = datetime(end.year, start_month, 1, tzinfo=timezone.utc) - timedelta(days=1)
+    return end.strftime("%Y-%m-%d")
+
+
+def evidence_reference(sources: list, citation: object) -> tuple[str, str]:
+    token = normalise_citation(citation)
+    for source in sources:
+        if normalise_citation(source["url"]) == token:
+            return token, hashlib.sha256(source["body"].encode("utf-8")).hexdigest()
+    raise gl.vm.UserError(f"{ERROR_LLM} citation is not an approved source")
+
+
+def evidence_fields_agree(leader: dict, mine: dict, fields: list) -> bool:
+    return all(leader.get(field) == mine.get(field) for field in fields)
 
 
 def format_scaled(value: int, scale: int, places: int) -> str:
@@ -221,6 +259,8 @@ def ratio_bp(numerator_milli: int, denominator_milli: int) -> int:
     """The whole numeric test, as plain integer arithmetic."""
     if denominator_milli == 0:
         raise gl.vm.UserError(f"{ERROR_EXPECTED} denominator came back as zero")
+    if denominator_milli < 0 or numerator_milli < 0:
+        raise gl.vm.UserError(f"{ERROR_EXPECTED} ratio figures must be nonnegative with a positive denominator")
     return int((numerator_milli * BP_ONE) // denominator_milli)
 
 
@@ -323,25 +363,29 @@ def extract_ratio_figures(
         )
 
     citation = pick(answer, "citation", "source", "source_url", "url") or urls[0]
+    citation, content_hash = evidence_reference(sources, citation)
     return {
         "numerator_milli": to_milli(numerator_raw),
         "denominator_milli": to_milli(denominator_raw),
         "unit": str(pick(answer, "unit", "units") or "").strip()[:64],
-        "citation": normalise_citation(citation),
+        "citation": citation,
+        "content_hash": content_hash,
         "locator": str(pick(answer, "locator", "label", "line_item") or "").strip()[:160],
-        "as_of": str(pick(answer, "as_of", "as_of_date", "date") or "").strip()[:40],
+        "as_of": canonical_date(pick(answer, "as_of", "as_of_date", "date")),
         "notes": str(pick(answer, "notes", "note", "comment") or "").strip()[:320],
     }
 
 
-def extract_filing_dates(urls: list, covenant_text: str, deadline_days: int) -> dict:
+def extract_filing_dates(urls: list, covenant_text: str, deadline_days: int, expected_period: str = "") -> dict:
     """Leader side of a filing timeliness covenant."""
     sources = gather_sources(urls)
     prompt = (
         "You are checking whether a borrower published a periodic report on time. "
         "Report dates only. Do not judge compliance.\n\n"
         f"COVENANT UNDER TEST: {covenant_text}\n"
-        f"The report is due within {deadline_days} days of the period end.\n\n"
+        f"The report is due within {deadline_days} days of the period end.\n"
+        f"REQUIRED PERIOD END: {expected_period or 'extract the reported period'}. "
+        "Find the report for this exact period, never substitute an older report.\n\n"
         f"{render_sources(sources)}\n\n"
         "Return JSON with exactly these keys:\n"
         '  "period_end": the end date of the most recent period reported on, ISO 8601\n'
@@ -362,11 +406,13 @@ def extract_filing_dates(urls: list, covenant_text: str, deadline_days: int) -> 
     published_raw = pick(answer, "published_at", "published", "publication_date", "filed_at")
     published_at = str(published_raw or "").strip()
     citation = pick(answer, "citation", "source", "source_url", "url") or urls[0]
+    citation, content_hash = evidence_reference(sources, citation)
     return {
-        "period_end": period_end[:40],
-        "published_at": published_at[:40],
+        "period_end": canonical_date(period_end),
+        "published_at": canonical_date(published_at, True),
         "report_title": str(pick(answer, "report_title", "title") or "").strip()[:160],
-        "citation": normalise_citation(citation),
+        "citation": citation,
+        "content_hash": content_hash,
         "notes": str(pick(answer, "notes", "note") or "").strip()[:320],
     }
 
@@ -421,12 +467,14 @@ def extract_prose_finding(urls: list, covenant_text: str) -> dict:
         raise gl.vm.UserError(f"{ERROR_LLM} verdict given with no artifact cited")
 
     citation = pick(answer, "citation", "source", "source_url", "url") or urls[0]
+    citation, content_hash = evidence_reference(sources, citation)
     return {
         "holds": holds,
         "artifact_id": normalise_citation(artifact),
         "artifact_title": str(pick(answer, "artifact_title", "title") or "").strip()[:200],
-        "artifact_date": str(pick(answer, "artifact_date", "date") or "").strip()[:40],
-        "citation": normalise_citation(citation),
+        "artifact_date": canonical_date(pick(answer, "artifact_date", "date"), True),
+        "citation": citation,
+        "content_hash": content_hash,
         "reasoning": str(pick(answer, "reasoning", "reason", "analysis") or "").strip()[:600],
     }
 
@@ -480,27 +528,11 @@ def ratio_validator(leaders_res, urls, numerator_label, denominator_label,
     except Exception:
         return False
 
-    if not within_tolerance(leader_bp, mine_bp, RATIO_TOLERANCE_BP):
-        return False
+    return (leader_bp == mine_bp and
+            breaches(leader_bp, threshold_bp, comparator) == breaches(mine_bp, threshold_bp, comparator) and
+            evidence_fields_agree(leader, mine, ["numerator_milli", "denominator_milli", "unit",
+                                                 "citation", "content_hash", "as_of", "locator"]))
 
-    if breaches(leader_bp, threshold_bp, comparator) != breaches(
-        mine_bp, threshold_bp, comparator
-    ):
-        return False
-
-    figures_agree = (
-        leader_num == mine["numerator_milli"] and leader_den == mine["denominator_milli"]
-    )
-    if not figures_agree:
-        # Two honest reads of a live dashboard can differ in the last digit.
-        # Tolerated only while the ratio and the verdict still line up, which
-        # the checks above have already established.
-        if not within_tolerance(leader_num, mine["numerator_milli"], RATIO_TOLERANCE_BP):
-            return False
-        if not within_tolerance(leader_den, mine["denominator_milli"], RATIO_TOLERANCE_BP):
-            return False
-
-    return normalise_citation(leader.get("citation")) == mine["citation"]
 
 
 def ratio_error_agrees(leaders_res, urls, numerator_label, denominator_label,
@@ -515,7 +547,7 @@ def ratio_error_agrees(leaders_res, urls, numerator_label, denominator_label,
         return False
 
 
-def filing_validator(leaders_res, urls, covenant_text, deadline_days) -> bool:
+def filing_validator(leaders_res, urls, covenant_text, deadline_days, expected_period="") -> bool:
     if not isinstance(leaders_res, gl.vm.Return):
         return filing_error_agrees(leaders_res, urls, covenant_text, deadline_days)
 
@@ -523,15 +555,12 @@ def filing_validator(leaders_res, urls, covenant_text, deadline_days) -> bool:
     if not isinstance(leader, dict):
         return False
     try:
-        mine = extract_filing_dates(urls, covenant_text, deadline_days)
+        mine = extract_filing_dates(urls, covenant_text, deadline_days, expected_period)
     except Exception:
         return False
 
-    if str(leader.get("period_end", ""))[:10] != mine["period_end"][:10]:
-        return False
-    if str(leader.get("published_at", ""))[:10] != mine["published_at"][:10]:
-        return False
-    return normalise_citation(leader.get("citation")) == mine["citation"]
+    return evidence_fields_agree(leader, mine, ["period_end", "published_at", "citation", "content_hash"])
+
 
 
 def filing_error_agrees(leaders_res, urls, covenant_text, deadline_days) -> bool:
@@ -557,9 +586,7 @@ def prose_validator(leaders_res, urls, covenant_text) -> bool:
     except Exception:
         return False
 
-    if bool(leader.get("holds")) != mine["holds"]:
-        return False
-    return normalise_citation(leader.get("artifact_id")) == mine["artifact_id"]
+    return evidence_fields_agree(leader, mine, ["holds", "artifact_id", "artifact_date", "citation", "content_hash"])
 
 
 def prose_error_agrees(leaders_res, urls, covenant_text) -> bool:
@@ -596,6 +623,7 @@ class Finding:
     narrative: str
     consequence_applied: str
     sequence: u256
+    content_hash: str
 
 
 @gl.evm.contract_interface
@@ -932,6 +960,8 @@ class CovenantMonitor(gl.Contract):
 
         figures = gl.vm.run_nondet_unsafe(leader, validator)
 
+        age = days_between(canonical_date(figures["as_of"]), canonical_date(block_now()))
+        require(0 <= age <= 120, "ratio evidence must be dated within the preceding120 days")
         numerator_milli = int(figures["numerator_milli"])
         denominator_milli = int(figures["denominator_milli"])
 
@@ -952,6 +982,7 @@ class CovenantMonitor(gl.Contract):
             "numerator_milli": numerator_milli,
             "denominator_milli": denominator_milli,
             "citation": str(figures["citation"]),
+            "content_hash": str(figures["content_hash"]),
             "locator": str(figures.get("locator", "")),
             "as_of": str(figures.get("as_of", "")),
             "narrative": (
@@ -963,19 +994,22 @@ class CovenantMonitor(gl.Contract):
         }
 
     def _measure_filing(self, urls, covenant_text, deadline_days, now) -> dict:
+        expected_period = required_quarter_end(now, deadline_days)
         def leader():
-            return extract_filing_dates(urls, covenant_text, deadline_days)
+            return extract_filing_dates(urls, covenant_text, deadline_days, expected_period)
 
         def validator(leaders_res) -> bool:
-            return filing_validator(leaders_res, urls, covenant_text, deadline_days)
+            return filing_validator(leaders_res, urls, covenant_text, deadline_days, expected_period)
 
         dates = gl.vm.run_nondet_unsafe(leader, validator)
 
-        period_end = str(dates["period_end"])
-        published_at = str(dates.get("published_at", "")).strip()
+        period_end = expected_period
+        published_at = canonical_date(dates.get("published_at"), True) if canonical_date(dates["period_end"]) == expected_period else ""
+        if published_at:
+            require(period_end <= published_at <= canonical_date(now), "invalid filing publication chronology")
 
         if len(published_at) == 0:
-            elapsed = days_between(period_end, now)
+            elapsed = days_between(period_end, canonical_date(now))
             breached = elapsed > deadline_days
             narrative = (
                 f"No report published for the period ended {period_end[:10]}. "
@@ -997,7 +1031,8 @@ class CovenantMonitor(gl.Contract):
             "numerator_milli": 0,
             "denominator_milli": 0,
             "citation": str(dates["citation"]),
-            "locator": str(dates.get("report_title", "")),
+            "content_hash": str(dates["content_hash"]),
+            "locator": f"Quarter ended {expected_period}",
             "as_of": published_at or period_end,
             "narrative": narrative,
         }
@@ -1013,7 +1048,8 @@ class CovenantMonitor(gl.Contract):
 
         holds = bool(finding["holds"])
         artifact_id = str(finding["artifact_id"])
-        title = str(finding.get("artifact_title", "")).strip()
+        artifact_date = str(finding.get("artifact_date", ""))
+        require(not artifact_date or artifact_date <= canonical_date(block_now()), "artifact date is in the future")
         return {
             "breached": not holds,
             "observed_bp": BP_ONE if holds else 0,
@@ -1021,12 +1057,12 @@ class CovenantMonitor(gl.Contract):
             "numerator_milli": 0,
             "denominator_milli": 0,
             "citation": str(finding["citation"]),
+            "content_hash": str(finding["content_hash"]),
             "locator": artifact_id,
             "as_of": str(finding.get("artifact_date", "")),
             "narrative": (
                 ("The promise still holds. " if holds else "The promise has been broken. ")
-                + (f"Relied on {title or artifact_id}. ")
-                + str(finding.get("reasoning", ""))
+                + f"Independently matched artifact {artifact_id} at the approved source."
             )[:900],
         }
 
@@ -1060,10 +1096,10 @@ class CovenantMonitor(gl.Contract):
             tested_at=now,
             breached=bool(reading["breached"]),
             status=status,
-            observed_bp=u256(max(0, int(reading["observed_bp"]))),
-            observed_atto=u256(max(0, int(reading["observed_atto"]))),
-            numerator_milli=u256(max(0, int(reading["numerator_milli"]))),
-            denominator_milli=u256(max(0, int(reading["denominator_milli"]))),
+            observed_bp=u256(int(reading["observed_bp"])),
+            observed_atto=u256(int(reading["observed_atto"])),
+            numerator_milli=u256(int(reading["numerator_milli"])),
+            denominator_milli=u256(int(reading["denominator_milli"])),
             threshold_bp=u256(int(threshold_bp)),
             citation=str(reading["citation"])[:400],
             locator=str(reading["locator"])[:200],
@@ -1071,6 +1107,7 @@ class CovenantMonitor(gl.Contract):
             narrative=str(reading["narrative"])[:900],
             consequence_applied=consequence,
             sequence=u256(int(self.test_total)),
+            content_hash=str(reading.get("content_hash", "")),
         )
 
     def _settle(self, facility_id, covenant_index, status, reading, consequence) -> None:
@@ -1151,6 +1188,7 @@ class CovenantMonitor(gl.Contract):
             "narrative": finding.narrative,
             "consequence_applied": finding.consequence_applied,
             "sequence": int(finding.sequence),
+            "content_hash": finding.content_hash,
         }
 
 
