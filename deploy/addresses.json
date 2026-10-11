@@ -3,13 +3,13 @@
   "chainId": 61999,
   "deployer": "0xBC1399c55538eC034d4Da550C03c34Ae0C357f53",
   "contracts": {
-    "facilityRegistry": "0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184",
-    "covenantMonitor": "0xCf43f89ea873e856Be28ad373e62022Bf756a91F",
-    "creditVault": "0xA8b087ff6229ADD096fc72BDFF297480C9ECc984"
+    "facilityRegistry": "0x4f3CE228C0f497d87c9704a7bC0e19dcBA83752A",
+    "covenantMonitor": "0xF2e101942009Da72eAC90b3a2a89B147ecC3E8E0",
+    "creditVault": "0x75d6f6E7B62fb0DE0A635bBd8bcd5EcC89C7a1da"
   },
   "sourceHashes": {
-    "facilityRegistry": "014810832fd4688bb1a99c6b44318bbc5205f2be1a221af00001bad9143f7fa1",
-    "covenantMonitor": "5e6e8c01394087a3b822904b8c91ab6b7fc3bff117c60cc188b32fa68af13a61",
-    "creditVault": "e18a0265bc5573ad114417a47cd0d6c8ba623ff3f0f812b1feb5b2ef28a32f74"
+    "facilityRegistry": "b6a72f0d37651c1d3dfa08a349412f259913c53596be710cc6de8d7a711dc95d",
+    "covenantMonitor": "ed7fda06fb8ecfabbb247fa6bc09e37cfcfff2426dd48733bff08c046dfec3d4",
+    "creditVault": "72bb1d835dfc0283172735ca5262c5b3019e6d372ccaf94bedab72f516ced58f"
   }
 }

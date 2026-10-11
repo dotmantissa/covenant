@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "evidence/studionet-review.json"
 GEN = 10**18
 EXPLORER = "https://explorer-studio.genlayer.com/tx/"
-SOURCE_URL = "https://raw.githubusercontent.com/dotmantissa/covenant/main/evidence/appeal-source.md"
+SOURCE_URL = "https://raw.githubusercontent.com/dotmantissa/covenant/main/evidence/audit-appeal-source.md"
 
 
 def execution_succeeded(receipt):
@@ -50,18 +50,29 @@ class ReviewRun:
         self.lender = Account.from_key(keys["GENLAYER_DEPLOYER_PRIVATE_KEY"])
         self.borrower = Account.from_key(keys["REVIEW_BORROWER_PRIVATE_KEY"])
         self.client = create_client(chain=studionet, account=self.lender)
+        self.active_label = None
+        self.journal_file = ROOT / ".review-envelope-journal.json"
+        self.envelopes = json.loads(self.journal_file.read_text()) if self.journal_file.exists() else {}
         original_request = self.client.provider.make_request
 
         def request(method, params):
+            if method == "eth_sendRawTransaction" and self.active_label:
+                previous = self.envelopes.get(self.active_label)
+                assert not previous or previous == params[0], "must never replace a signed operation"
+                self.envelopes[self.active_label] = params[0]
+                fd = os.open(str(self.journal_file) + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w") as target:
+                    json.dump(self.envelopes, target)
+                Path(str(self.journal_file) + ".tmp").replace(self.journal_file)
             for attempt in range(6):
                 try:
                     return original_request(method, params)
                 except Exception as err:
                     transient = any(word in str(err).lower() for word in
-                        ("connection", "timeout", "429", "-32429", "invalid json", "502", "503"))
+                        ("connection", "timeout", "ssl", "eof", "429", "-32429", "invalid json", "502", "503"))
                     # Retrying identical signed bytes preserves its hash and nonce.
                     # Never re-sign an ambiguous submission with a fresh nonce.
-                    retryable = method.startswith(("eth_get", "gen_get", "gen_call")) or method == "eth_sendRawTransaction"
+                    retryable = method.startswith(("eth_get", "eth_estimate", "gen_get", "gen_call")) or method == "eth_sendRawTransaction"
                     if not transient or not retryable or attempt == 5:
                         raise
                     print("retrying", method, "after transient transport failure", flush=True)
@@ -95,7 +106,13 @@ class ReviewRun:
             self.children(label, record["receipt"])
             return record["receipt"]
         if not record:
-            tx_hash = submit()
+            self.active_label = label
+            try:
+                envelope = self.envelopes.get(label)
+                tx_hash = (self.client.provider.make_request("eth_sendRawTransaction", [envelope])["result"]
+                           if envelope else submit())
+            finally:
+                self.active_label = None
             tx_hash = tx_hash.hex() if hasattr(tx_hash, "hex") else str(tx_hash)
             if not tx_hash.startswith("0x"):
                 tx_hash = "0x" + tx_hash
@@ -204,10 +221,13 @@ class ReviewRun:
                                   ("covenantMonitor", "set_vault", "creditVault"),
                                   ("creditVault", "set_monitor", "covenantMonitor")]:
             self.write(f"wire/{key}/{method}", key, method, [contracts[peer]])
+        for key in ["facilityRegistry", "covenantMonitor", "creditVault"]:
+            self.write(f"seal/{key}", key, "seal_wiring", [])
         for key, peer1, peer2 in [("facilityRegistry", "monitor", "vault"),
                                  ("covenantMonitor", "registry", "vault"),
                                  ("creditVault", "registry", "monitor")]:
             wiring = self.read(key, "get_wiring")
+            assert wiring["wiring_sealed"], "production authorities must be sealed"
             peers = {"monitor": "covenantMonitor", "registry": "facilityRegistry", "vault": "creditVault"}
             for name in [peer1, peer2]:
                 assert wiring[name].lower() == contracts[peers[name]].lower()
@@ -288,8 +308,8 @@ class ReviewRun:
             "Incur no new senior debt without the lender's written consent.", "prose", "No senior debt",
             "", "", 0, 0, "gte", 24, 0, 0, "acceleration", [SOURCE_URL]])
         self.write("appeal/unauthorized-test", "covenantMonitor", "test_covenant", [fid, 0], expect_success=False)
-        self.write("appeal/borrower-approve", "facilityRegistry", "approve_covenant", [fid, 0], borrower=True)
-        self.write("appeal/breach-test", "covenantMonitor", "test_covenant", [fid, 0])
+        self.write("appeal/borrower-approve", "facilityRegistry", "approve_covenant", [fid, 0, self.read("facilityRegistry", "get_covenant", [fid, 0])["terms_digest"]], borrower=True)
+        self.write("appeal/breach-test", "covenantMonitor", "test_covenant", [fid, 0, True])
         finding = self.read("covenantMonitor", "get_finding", [fid, 0])
         position = self.read("creditVault", "get_position", [fid])
         assert finding["breached"] and position["accelerated"] and position["draw_frozen"]
@@ -299,8 +319,8 @@ class ReviewRun:
             "Maintain at least one wei of native ETH in the agreed Ethereum mainnet treasury.",
             "treasury", "Authenticated ETH floor", "", "", 0, 1, "gte", 24, 0, 0,
             "draw_stop", []])
-        self.write("treasury/borrower-approve", "facilityRegistry", "approve_covenant", [fid, 1], borrower=True)
-        self.write("treasury/authenticated-test", "covenantMonitor", "test_covenant", [fid, 1])
+        self.write("treasury/borrower-approve", "facilityRegistry", "approve_covenant", [fid, 1, self.read("facilityRegistry", "get_covenant", [fid, 1])["terms_digest"]], borrower=True)
+        self.write("treasury/authenticated-test", "covenantMonitor", "test_covenant", [fid, 1, True])
         treasury = self.read("covenantMonitor", "get_finding", [fid, 1])
         assert not treasury["breached"] and int(treasury["observed_atto"]) > 0
         assert "chain:1" in treasury["citation"] and "eth.drpc.org" in treasury["citation"]

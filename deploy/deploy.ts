@@ -18,17 +18,14 @@
  * again.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Wallet } from "ethers";
+import { Wallet, Interface, type InterfaceAbi } from "ethers";
+import { assertExecuted } from "../lib/chain";
 import { createClient, createAccount } from "genlayer-js";
 import * as chains from "genlayer-js/chains";
-import {
-  executionResultNumberToName,
-  transactionsStatusNumberToName,
-} from "genlayer-js/types";
-import type { GenLayerTransaction, TransactionHash } from "genlayer-js/types";
+import { TransactionHashVariant, type TransactionHash } from "genlayer-js/types";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ADDRESS_FILE = join(ROOT, "deploy", "addresses.json");
@@ -126,59 +123,6 @@ async function withRetry<T>(
 }
 
 /** Resolves a receipt field that may arrive as either a name or an index. */
-function nameOf(
-  name: string | undefined,
-  numeric: number | string | undefined,
-  table: Record<number, string>,
-): string {
-  if (name) return name;
-  if (numeric === undefined || numeric === null) return "";
-  return table[Number(numeric)] ?? String(numeric);
-}
-
-/**
- * A FINALIZED lifecycle status does not mean the code ran. Studionet leaves
- * txExecutionResult unset and reports the outcome only on the leader receipt,
- * as `execution_result: "SUCCESS"`, so that is the field to trust. Treating a
- * FINALIZED status as success on its own silently passes reverted writes.
- */
-function assertExecuted(label: string, receipt: GenLayerTransaction): void {
-  const status = nameOf(
-    receipt.statusName,
-    receipt.status,
-    transactionsStatusNumberToName,
-  ) || "unknown";
-
-  const leaders = receipt.consensus_data?.leader_receipt ?? [];
-  const execution =
-    nameOf(
-      receipt.txExecutionResultName,
-      receipt.txExecutionResult,
-      executionResultNumberToName,
-    ) || leaders[0]?.execution_result || "";
-
-  const failed = /ERROR|FAIL|ROLLBACK|REVERT/i.test(execution);
-  const leaderError = leaders.find((leader) => leader?.error)?.error;
-
-  if (failed || leaderError) {
-    throw new Error(
-      `${label} reverted. status=${status} execution=${execution || "unset"}\n` +
-        `${leaderError ?? "no error detail on the leader receipt"}`,
-    );
-  }
-  if (status !== "ACCEPTED" && status !== "FINALIZED") {
-    throw new Error(`${label} did not settle. status=${status}`);
-  }
-  if (!execution) {
-    // Never pass this off as verified. Nothing on the receipt said the code ran.
-    throw new Error(
-      `${label} settled as ${status} but no execution result was reported, ` +
-        `so success cannot be confirmed. Inspect the transaction before continuing.`,
-    );
-  }
-  console.log(`    ${label}: ${status}, ${execution}`);
-}
-
 // ------------------------------------------------------------------- main
 
 async function main(): Promise<void> {
@@ -204,6 +148,42 @@ async function main(): Promise<void> {
   const account = createAccount(privateKey as `0x${string}`);
 
   const client = createClient({ chain: chain as never, account });
+  const journalFile=join(ROOT,".deploy-journal.json");
+  type Operation={signed?:`0x${string}`;hash?:TransactionHash};
+  const saved=existsSync(journalFile)?JSON.parse(readFileSync(journalFile,"utf8")):{};
+  const journal:{network:string;deployer:string;done:boolean;steps:Record<string,Operation>}=process.argv.includes("--fresh")&&saved.done
+    ?{network:networkAlias,deployer:account.address,done:false,steps:{}}
+    :saved.network?saved:{network:networkAlias,deployer:account.address,done:false,steps:{}};
+  if(journal.network!==networkAlias||journal.deployer.toLowerCase()!==account.address.toLowerCase())throw new Error("Deployment journal belongs to another signer/network");
+  function saveJournal(){writeFileSync(journalFile+".tmp",JSON.stringify(journal),{mode:0o600});renameSync(journalFile+".tmp",journalFile);}
+  let activeLabel="";
+  const sign=account.signTransaction;
+  account.signTransaction=(async(...args:Parameters<typeof sign>)=>{
+    const raw=await sign(...args),operation=journal.steps[activeLabel]??{};
+    if(!activeLabel||operation.signed&&operation.signed!==raw)throw new Error("Refusing to replace a signed operation");
+    journal.steps[activeLabel]={...operation,signed:raw};saveJournal();return raw;
+  }) as typeof sign;
+  async function once(label:string,submit:()=>Promise<`0x${string}`>):Promise<TransactionHash>{
+    const operation=journal.steps[label]??{};if(operation.hash)return operation.hash;
+    activeLabel=label;
+    try {
+      let hash:TransactionHash;
+      if(operation.signed){
+        const broadcast=await withRetry(label,()=>client.sendRawTransaction({serializedTransaction:operation.signed!}));
+        if(client.chain.isStudio)hash=broadcast as TransactionHash;
+        else {
+          const receipt=await client.request({method:"eth_getTransactionReceipt",params:[broadcast]}) as unknown as {status:string;logs:{topics:string[];data:string}[]}|null;
+          if(!receipt)throw new Error("Signed operation remains pending; rerun to recover the same envelope");
+          if(receipt.status==='0x0')throw new Error("Signed operation reverted before consensus");
+          const decoder=new Interface(client.chain.consensusMainContract!.abi as unknown as InterfaceAbi);
+          const event=receipt.logs.map(log=>{try{return decoder.parseLog(log);}catch{return null;}}).find(e=>e&&["NewTransaction","CreatedTransaction"].includes(e.name));
+          if(!event)throw new Error("Signed operation has not indexed its consensus transaction id");
+          hash=String(event.args.txId) as TransactionHash;
+        }
+      }else hash=await submit() as TransactionHash;
+      journal.steps[label]={...journal.steps[label],hash};saveJournal();return hash;
+    }finally{activeLabel="";}
+  }
   console.log(`network  ${networkAlias}`);
   console.log(`deployer ${account.address}\n`);
 
@@ -240,11 +220,13 @@ async function main(): Promise<void> {
       if (sourceHashes[key] !== digest) {
         throw new Error(`${key}: stored deployment differs from current source. Run npm run deploy:contracts -- --fresh to deploy the complete new stack.`);
       }
-      console.log(`${key}: already at ${existing}, skipping deploy`);
+      const deployed=await withRetry(`${key} source`,()=>client.request({method:"gen_getContractCode",params:[existing as `0x${string}`]}));
+      if(createHash("sha256").update(Buffer.from(deployed as string,"base64")).digest("hex")!==digest)throw new Error("Recorded address has different on-chain source");
+      console.log(`${key}: verified source at ${existing}, skipping deploy`);
       return existing;
     }
     console.log(`${key}: deploying`);
-    const hash = await withRetry(`${key} deploy`, () =>
+    const hash = await once(`deploy:${key}:${digest}`, () =>
       client.deployContract({ code, args: args as never[] }),
     );
     console.log(`    tx ${hash}`);
@@ -267,6 +249,8 @@ async function main(): Promise<void> {
     addresses[key] = address;
     sourceHashes[key] = digest;
     persist();
+    const deployed=await withRetry(`${key} source`,()=>client.request({method:"gen_getContractCode",params:[address as `0x${string}`]}));
+    if(createHash("sha256").update(Buffer.from(deployed as string,"base64")).digest("hex")!==digest)throw new Error("New deployment source mismatch");
     console.log(`    ${key} -> ${address}\n`);
     return address;
   }
@@ -278,7 +262,7 @@ async function main(): Promise<void> {
     args: unknown[],
   ): Promise<void> {
     console.log(`wiring ${label}`);
-    const hash = await withRetry(label, () =>
+    const hash = await once(`${label}:${address}:${JSON.stringify(args)}`, () =>
       client.writeContract({
         address: address as `0x${string}`,
         functionName,
@@ -309,6 +293,7 @@ async function main(): Promise<void> {
   await write("monitor.set_vault", monitor, "set_vault", [vault]);
   await write("vault.set_monitor", vault, "set_monitor", [monitor]);
 
+  for(const address of [registry,monitor,vault])await write(`seal:${address}`,address,"seal_wiring",[]);
   console.log("\nverifying wiring from chain state");
 
   /** Reads a contract's get_wiring and returns it as a flat lookup. */
@@ -317,7 +302,7 @@ async function main(): Promise<void> {
       client.readContract({
         address: address as `0x${string}`,
         functionName: "get_wiring",
-        args: [],
+        args: [], transactionHashVariant:TransactionHashVariant.LATEST_FINAL,
       }),
     );
     return (result ?? {}) as Record<string, unknown>;
@@ -352,6 +337,8 @@ async function main(): Promise<void> {
     [ENV_KEYS.creditVault]: vault,
   });
 
+  if(!seen.registry.wiring_sealed||!seen.monitor.wiring_sealed||!seen.vault.wiring_sealed)throw new Error("Wiring was not sealed");
+  journal.done=true;saveJournal();
   console.log(`\nall ${expected.length} wiring pointers verified`);
   console.log(`addresses written to deploy/addresses.json and .env.local`);
 }
