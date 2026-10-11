@@ -52,6 +52,8 @@ The protocol separates agreement state, consensus monitoring, and capital custod
 
 ## Deployed Addresses (Studionet)
 
+The [live application](https://covenant-ten-sable.vercel.app) uses the corrected contracts. See the [reviewer remediation and transaction evidence](evidence/REVIEW.md) for verified economic, appeal and hosted checks.
+
 All three contracts are deployed and wired together on GenLayer Studionet (Chain ID 61999):
 
 - FacilityRegistry: `0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184`

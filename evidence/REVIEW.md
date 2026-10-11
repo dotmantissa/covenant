@@ -104,3 +104,9 @@ Treasury verification trusts the two fixed HTTPS operators and GenLayer consensu
 Studio's [storage handler](https://github.com/genlayerlabs/genlayer-studio/blob/c94072951e483510329670aa427fba3fa6944f45/backend/node/genvm/base.py#L635) rejects `LATEST_FINAL` peer reads. Registry-authenticated messages emitted from finalized decisions replace that unsupported operation. Studio's [native transfer handler](https://github.com/genlayerlabs/genlayer-studio/blob/c94072951e483510329670aa427fba3fa6944f45/backend/consensus/base.py#L678) marks credited SENDs separately from IC execution. Live balance checks caught and resolved both runtime assumptions before this final proof.
 
 Explorer browser protection prevented automated page scraping; the links use the official explorer's `/tx/` route and the accompanying RPC receipts were independently rechecked.
+
+## Hosted application verification
+
+The [production app](https://covenant-ten-sable.vercel.app) is running source commit `39a7ec9` on [deployment dpl_EAWQeaD4FR2D7XUGtPT5f6iGySAX](https://covenant-hnsl7gje7-mantissas-projects.vercel.app), verified Ready through Vercel. Production and preview public configuration use the three corrected addresses above; existing private authentication and database configuration is preserved.
+
+Public HTTP checks confirmed the homepage displays every corrected address and links this report. The reviewer facility page/API returns the active facility, two compliant covenants, overturned appeal, zero commitments/principal/accrued interest, and cleared acceleration/draw freeze. Live listings exclude historical deployments while retaining their database records; a legacy facility detail returns 404. Unauthenticated borrower approval and interest withdrawal requests both return 401 without submitting contract writes. Structured results are recorded under `hosting` in the JSON evidence.

@@ -11562,5 +11562,40 @@
     "typescript": "passed",
     "eslint": "passed",
     "productionBuild": "passed"
+  },
+  "hosting": {
+    "baseUrl": "https://covenant-ten-sable.vercel.app",
+    "deploymentUrl": "https://covenant-hnsl7gje7-mantissas-projects.vercel.app",
+    "deploymentId": "dpl_EAWQeaD4FR2D7XUGtPT5f6iGySAX",
+    "status": "Ready",
+    "sourceCommit": "39a7ec9",
+    "checkedAt": "2026-10-11T04:28:54.404900+00:00",
+    "publicContracts": {
+      "facilityRegistry": "0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184",
+      "covenantMonitor": "0xCf43f89ea873e856Be28ad373e62022Bf756a91F",
+      "creditVault": "0xA8b087ff6229ADD096fc72BDFF297480C9ECc984"
+    },
+    "checks": {
+      "homepageHttpStatus": 200,
+      "allCorrectedContractAddressesPresent": true,
+      "evidenceLinkPresent": true,
+      "facilityPageHttpStatus": 200,
+      "facilityDetailHttpStatus": 200,
+      "facilityStatus": "active",
+      "appealStatus": "overturned",
+      "compliantCovenants": 2,
+      "committedAtto": "0",
+      "drawnAtto": "0",
+      "accruedInterestAtto": "0",
+      "accelerated": false,
+      "drawFrozen": false,
+      "listedFacilityIds": [
+        "review-1791688995"
+      ],
+      "legacyFacilityDetailHttpStatus": 404,
+      "unauthenticatedBorrowerApprovalHttpStatus": 401,
+      "unauthenticatedInterestWithdrawalHttpStatus": 401
+    },
+    "cachePolicy": "Historical database rows retained; live views are filtered against corrected registry membership."
   }
 }
