@@ -598,6 +598,16 @@ class Finding:
     sequence: u256
 
 
+@gl.evm.contract_interface
+class NativeRecipient:
+    """EOA/chain-layer payout; external messages execute only at finalization."""
+    class View:
+        pass
+
+    class Write:
+        pass
+
+
 class CovenantMonitor(gl.Contract):
     owner: Address
     registry: Address
@@ -803,7 +813,7 @@ class CovenantMonitor(gl.Contract):
         recipient = Address(str(facility["lender"])) if upheld else Address(
             str(facility["borrower"])
         )
-        gl.get_contract_at(recipient).emit_transfer(value=u256(bond), on="finalized")
+        NativeRecipient(recipient).emit_transfer(value=u256(bond))
 
         revision = int(self.appeal_revisions.get(key, u256(0))) + 1
         self.appeal_revisions[key] = u256(revision)

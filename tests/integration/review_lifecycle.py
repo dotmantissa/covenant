@@ -76,7 +76,7 @@ class ReviewRun:
 
     def receipt(self, tx_hash):
         return self.client.wait_for_transaction_receipt(tx_hash,
-            status=TransactionStatus.FINALIZED, interval=7000, retries=180)
+            status=TransactionStatus.FINALIZED, interval=7000, retries=180, full_transaction=True)
 
     def step(self, label, submit, expect_success=True):
         record = self.data["steps"].get(label)
@@ -100,7 +100,7 @@ class ReviewRun:
         record["receipt"] = {k: receipt[k] for k in
             ("hash", "status", "status_name", "to_address", "data", "triggered_transactions") if k in receipt}
         record["receipt"]["consensus_data"] = {"leader_receipt": [
-            {k: leader[k] for k in ("execution_result", "error", "result", "pending_transactions", "vote", "mode") if k in leader}
+            {k: leader[k] for k in ("execution_result", "error", "result", "pending_transactions", "pending_eth_transactions", "vote", "mode") if k in leader}
             for leader in leaders]}
         receipt = record["receipt"]
         save(self.data)
@@ -234,6 +234,17 @@ class ReviewRun:
         assert finding["breached"] and position["accelerated"] and position["draw_frozen"]
         assert int(position["drawn_atto"]) == 10 * GEN
         assert self.read("facilityRegistry", "get_facility", [fid])["status"] == "accelerating"
+        self.write("treasury/draft", "facilityRegistry", "add_covenant", [fid,
+            "Maintain at least one wei of native ETH in the agreed Ethereum mainnet treasury.",
+            "treasury", "Authenticated ETH floor", "", "", 0, 1, "gte", 24, 0, 0,
+            "draw_stop", []])
+        self.write("treasury/borrower-approve", "facilityRegistry", "approve_covenant", [fid, 1], borrower=True)
+        self.write("treasury/authenticated-test", "covenantMonitor", "test_covenant", [fid, 1])
+        treasury = self.read("covenantMonitor", "get_finding", [fid, 1])
+        assert not treasury["breached"] and int(treasury["observed_atto"]) > 0
+        assert "chain:1" in treasury["citation"] and "eth.drpc.org" in treasury["citation"]
+        assert self.read("creditVault", "get_position", [fid])["accelerated"]
+        self.check("authenticated_treasury_and_release_isolation", treasury)
         self.write("appeal/blocked-draw", "creditVault", "draw", [fid, GEN], borrower=True, expect_success=False)
         self.write("appeal/post-bond", "covenantMonitor", "appeal_breach", [fid, 0], GEN, borrower=True)
         assert self.read("covenantMonitor", "get_appeal_bond", [fid, 0]) == str(GEN)

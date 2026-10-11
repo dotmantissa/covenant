@@ -218,6 +218,8 @@ def test_collected_interest_isolated_partial_withdraw_and_replay(funded, direct_
     vault.withdraw_interest(FACILITY_ID)
     with direct_vm.expect_revert("no earned interest"):
         vault.withdraw_interest(FACILITY_ID)
+    assert wiring.balance_of(funded["lender"]) == before  # native value is reserved, not yet credited
+    wiring.drain()
     assert wiring.balance_of(funded["lender"]) - before == collected
     position = vault.get_position(FACILITY_ID)
     undrawn = int(position["committed_atto"]) - int(position["drawn_atto"])
@@ -225,6 +227,7 @@ def test_collected_interest_isolated_partial_withdraw_and_replay(funded, direct_
     vault.withdraw_free_capital(FACILITY_ID, undrawn)
     assert wiring.balance_of(vault.address_bytes) == 0
     assert all(m.get("on") == "finalized" for m in wiring.messages)
+    assert all(t["kind"] == "external" for t in wiring.transfers)
 
 
 @pytest.mark.parametrize("third_party", [False, True])
@@ -232,11 +235,14 @@ def test_surplus_returns_to_payer_and_principal_remains_available(funded, direct
     vault, wiring = funded["vault"], funded["wiring"]
     direct_vm.sender = funded["borrower"]
     vault.draw(FACILITY_ID, 500_000 * GEN)
+    wiring.drain()
     payer = direct_charlie if third_party else funded["borrower"]
     before = wiring.balance_of(payer)
     result = repay_amount(funded, direct_vm, payer, 600_000 * GEN)
     assert result["principal_paid_atto"] == str(500_000 * GEN)
     assert result["excess_refunded_atto"] == str(100_000 * GEN)
+    assert wiring.balance_of(payer) == before
+    wiring.drain()
     assert wiring.balance_of(payer) - before == 100_000 * GEN
     assert wiring.balance_of(vault.address_bytes) == PRINCIPAL
     assert int(vault.get_position(FACILITY_ID)["repaid_atto"]) == 500_000 * GEN

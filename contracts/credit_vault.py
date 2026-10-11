@@ -116,6 +116,16 @@ class Position:
     enforcement_count: u256
 
 
+@gl.evm.contract_interface
+class NativeRecipient:
+    """EOA/chain-layer payout; external messages execute only at finalization."""
+    class View:
+        pass
+
+    class Write:
+        pass
+
+
 class CreditVault(gl.Contract):
     owner: Address
     registry: Address
@@ -251,9 +261,7 @@ class CreditVault(gl.Contract):
         position.last_event_at = now
         self.total_drawn_atto = u256(int(self.total_drawn_atto) + amount)
 
-        gl.get_contract_at(position.borrower).emit_transfer(
-            value=u256(amount), on="finalized"
-        )
+        NativeRecipient(position.borrower).emit_transfer(value=u256(amount))
 
         return {
             "facility_id": position.facility_id,
@@ -299,9 +307,7 @@ class CreditVault(gl.Contract):
         excess = remaining
         if excess > 0:
             require(excess <= int(self.balance), "the vault cannot refund the surplus")
-            gl.get_contract_at(gl.message.sender_address).emit_transfer(
-                value=u256(excess), on="finalized"
-            )
+            NativeRecipient(gl.message.sender_address).emit_transfer(value=u256(excess))
 
         return {
             "facility_id": position.facility_id,
@@ -333,9 +339,7 @@ class CreditVault(gl.Contract):
         position.last_event_at = now
         self.total_committed_atto = u256(max(0, int(self.total_committed_atto) - amount))
 
-        gl.get_contract_at(position.lender).emit_transfer(
-            value=u256(amount), on="finalized"
-        )
+        NativeRecipient(position.lender).emit_transfer(value=u256(amount))
         return {
             "facility_id": position.facility_id,
             "committed_atto": str(int(position.committed_atto)),
@@ -358,9 +362,7 @@ class CreditVault(gl.Contract):
         require(withdraw_amount <= int(self.balance), "the vault does not hold that much")
 
         self.interest_collected_atto[key] = u256(available - withdraw_amount)
-        gl.get_contract_at(position.lender).emit_transfer(
-            value=u256(withdraw_amount), on="finalized"
-        )
+        NativeRecipient(position.lender).emit_transfer(value=u256(withdraw_amount))
         return {
             "facility_id": key,
             "interest_withdrawn_atto": str(withdraw_amount),

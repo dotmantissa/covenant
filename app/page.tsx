@@ -7,6 +7,9 @@ import { desc } from "drizzle-orm";
 
 export const revalidate = 10;
 
+// Portfolio data changes with settlement and needs runtime database access.
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const addrs = contractAddresses();
 

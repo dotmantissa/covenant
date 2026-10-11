@@ -212,6 +212,19 @@ class Wiring:
             except Exception as err:
                 return _encode_user_error(getattr(err, "message", None) or str(err))
 
+        if "EthSend" in request:
+            spec = request["EthSend"]
+            target = _as_bytes(spec["address"])
+            value = int(spec.get("value", 0) or 0)
+            assert spec.get("calldata") == b"", "only pure native payouts are expected"
+            self.messages.append(dict(spec, on="finalized", kind="external"))
+            self.debit(caller, value)
+            self.transfers.append({"to": "0x" + target.hex(),
+                "from": "0x" + _as_bytes(caller).hex(), "value": value,
+                "settled": False, "kind": "external"})
+            self.deferred.append((target, {"_transfer_index": len(self.transfers) - 1}, caller, value))
+            return {"ok": None}
+
         if "PostMessage" in request:
             spec = request["PostMessage"]
             self.messages.append(dict(spec))
@@ -221,17 +234,9 @@ class Wiring:
 
             if value > 0 and caller is not None:
                 self.debit(caller, value)
-                self.credit(target, value)
 
             if target not in self.contracts or not payload.get("method"):
-                self.transfers.append(
-                    {
-                        "to": "0x" + target.hex(),
-                        "from": "0x" + _as_bytes(caller).hex() if caller else None,
-                        "value": value,
-                    }
-                )
-                return {"ok": None}
+                raise AssertionError("Internal IC transfer cannot pay an EOA; use EthSend")
 
             # Emitted calls settle after the current call in production, so they
             # are queued here and drained explicitly by the test.
@@ -245,7 +250,16 @@ class Wiring:
         ran = 0
         while self.deferred:
             target, payload, sender, value = self.deferred.pop(0)
-            self._invoke(target, payload, sender, value)
+            if "_transfer_index" in payload:
+                transfer = self.transfers[payload["_transfer_index"]]
+                # Reserved native value can be delivered once, as on-chain.
+                if not transfer["settled"]:
+                    self.credit(target, value)
+                    transfer["settled"] = True
+            else:
+                if value:
+                    self.credit(target, value)
+                self._invoke(target, payload, sender, value)
             ran += 1
         return ran
 
