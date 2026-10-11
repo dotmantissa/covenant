@@ -3,6 +3,7 @@ import {NextResponse} from 'next/server';
 import {readClient,readView,addresses} from '@/lib/chain';
 import {genlayerNetwork} from '@/lib/env';
 import {deploymentId} from '@/lib/deployment';
+import {privy} from '@/lib/privy';
 import manifest from '@/deploy/addresses.json';
 let cached:{expires:number;result:unknown}|undefined;
 export const maxDuration=60;
@@ -22,7 +23,10 @@ export async function GET(){
   const required=['DATABASE_URL','NEXT_PUBLIC_PRIVY_APP_ID','PRIVY_APP_SECRET','SIGNER_MASTER_SECRET','CRON_SECRET'];
   const configuration=Object.fromEntries(required.map(key=>[key,Boolean(process.env[key])]));
   if(Object.values(configuration).some(present=>!present))throw Error('Required deployment configuration is missing');
-  const result={network:genlayerNetwork(),deploymentId:deploymentId(),revision:process.env.VERCEL_GIT_COMMIT_SHA??null,verifiedAt:new Date().toISOString(),contracts:Object.fromEntries(checks),configuration};
+  // Exercise the protected credentials against the actual identity provider.
+  const [verificationKey,settings]=await Promise.all([privy().getVerificationKey(),privy().getAppSettings()]);
+  if(!verificationKey||!settings)throw Error('Identity provider verification failed');
+  const result={network:genlayerNetwork(),deploymentId:deploymentId(),revision:process.env.VERCEL_GIT_COMMIT_SHA??null,verifiedAt:new Date().toISOString(),contracts:Object.fromEntries(checks),configuration,authentication:{credentialsVerified:true}};
   cached={expires:Date.now()+30000,result};return NextResponse.json(result);
  }catch{return NextResponse.json({error:'Deployment source, authority or configuration verification is unavailable.'},{status:503});}
 }
