@@ -60,6 +60,7 @@ type EvidenceDetailResponse = {
     thresholdAtto: string;
     breachConsequence: string;
     testFrequencyHours: number;
+    filingDeadlineDays: number;
   } | null;
 };
 
@@ -267,7 +268,7 @@ export default function EvidenceCitationPage({
                 <div className="space-y-0.5">
                   <span className="text-[10px] uppercase text-[var(--ink-3)]">Treasury Balance</span>
                   <div className="text-sm font-semibold text-[var(--ink)] tabular-numbers">
-                    {formatAtto(test.observedAtto)}
+                    {formatAtto(test.observedAtto,"ETH")}
                   </div>
                 </div>
               )}
@@ -296,8 +297,8 @@ export default function EvidenceCitationPage({
               <div className="p-3 rounded bg-[var(--paper-2)] border border-[var(--rule)] font-mono text-[11px] space-y-1">
                 <div className="text-[var(--ink-3)] uppercase text-[10px]">Deterministic Output</div>
                 <div className="text-[var(--ink)] font-semibold">
-                  Observed: {test.kind === "ratio" ? formatBp(test.observedBp, true) : test.observedBp.toString()}{" "}
-                  vs Threshold: {test.kind === "ratio" ? formatBp(test.thresholdBp, true) : test.thresholdBp.toString()}
+                  Observed: {test.kind === "ratio" ? formatBp(test.observedBp, true) : test.kind === "treasury" ? formatAtto(test.observedAtto,"ETH") : test.kind === "prose" ? (test.breached ? "Promise broken" : "Promise satisfied") : `${test.observedBp} days`}{" "}
+                  {test.kind !== "prose" && <>vs Threshold: {test.kind === "ratio" ? formatBp(test.thresholdBp, true) : test.kind === "treasury" ? formatAtto(covenant?.thresholdAtto,"ETH") : `${covenant?.filingDeadlineDays ?? 0} days`}</>}
                 </div>
               </div>
 
@@ -313,7 +314,7 @@ export default function EvidenceCitationPage({
               <span className="w-5 h-5 rounded-full bg-[var(--paper-2)] border border-[var(--rule)] flex items-center justify-center text-[10px] text-[var(--ink)] font-semibold">
                 4
               </span>
-              <span>Vault Enforcement Action</span>
+              <span>Vault Enforcement Instruction</span>
             </div>
 
             <div className="pl-7 text-xs font-mono space-y-1">
@@ -326,7 +327,7 @@ export default function EvidenceCitationPage({
               <p className="text-[var(--ink-2)] text-[11px]">
                 {test.breached
                   ? "Enforcement instruction emitted to CreditVault contract upon consensus finalization."
-                  : "All tested metrics remain within agreed parameters; facility remains active."}
+                  : "This covenant is compliant. Facility rights also depend on every other restriction and finalized settlement."}
               </p>
             </div>
           </div>

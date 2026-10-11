@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { broadcastOnce } from "../../lib/intent-engine";
-import { decodeContractResult,inspectSettlement,type Client } from "../../lib/chain";
+import { decodeContractResult,inspectSettlement,assertExecuted,type Client } from "../../lib/chain";
 
 test("crash after broadcast replays persisted bytes without new signing",async()=>{
   const row={signedTransaction:null as string|null,txHash:null as string|null};let signCount=0;const events:string[]=[];
@@ -42,4 +42,12 @@ test('large settlement graphs make durable progress across bounded invocations',
  assert(await inspectSettlement(client,root,'repair',progress,12));assert.equal(Object.keys(progress).length,30);
  const first=children[0]!;progress[first]!.parent='forged-parent';
  await assert.rejects(()=>inspectSettlement(client,root,'repair',progress,12),/parent linkage changed/);
+});
+test('Studio list return strings decode identically to full result envelopes',()=>{
+ const evidence=JSON.parse(readFileSync('evidence/studionet-review-v1.json','utf8'));
+ const envelope=evidence.steps['appeal/resolve'].receipt.consensus_data.leader_receipt[0].result;
+ assert.deepEqual(decodeContractResult(envelope.raw),decodeContractResult(envelope));
+ // Contract return bytes must not be mistaken for a consensus AGREE enum.
+ const listSummary={statusName:'FINALIZED',result:envelope.raw,consensus_data:{leader_receipt:[{execution_result:'SUCCESS'}]}};
+ assert.throws(()=>assertExecuted('summary',listSummary as never),/did not reach agreeing consensus/);
 });

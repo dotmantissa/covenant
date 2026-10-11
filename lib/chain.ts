@@ -298,8 +298,10 @@ export async function waitForEmittedTransactions(
 
 /** Decode the actual return envelope, including Studio's base64 raw field. */
 export function decodeContractResult(value: unknown): unknown {
-  if (!value || typeof value !== "object" || !("raw" in value) || typeof value.raw !== "string") return value;
-  const encoded = Buffer.from(value.raw, "base64");
+  const raw=typeof value === "string" ? value : value && typeof value === "object" && "raw" in value ? value.raw : undefined;
+  if(typeof raw !== "string")return value;
+  const encoded = Buffer.from(raw, "base64");
+  if(typeof value === "string" && encoded[0] !== 0)return value;
   if (encoded[0] !== 0) throw new Error("contract result is not a successful return envelope");
   const decoded = abi.calldata.decode(encoded.subarray(1));
   return JSON.parse(JSON.stringify(decoded, (_key, v) => v instanceof Map ? Object.fromEntries(v) : typeof v === "bigint" ? (v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(v) : v.toString()) : v));

@@ -186,7 +186,7 @@ function EvidenceListContent() {
                         {item.kind === "ratio"
                           ? `Observed: ${formatBp(item.observedBp, true)}`
                           : item.kind === "treasury"
-                          ? `Holds: ${formatAtto(item.observedAtto)}`
+                          ? `Holds: ${formatAtto(item.observedAtto, "ETH")}`
                           : `${item.observedBp} days elapsed`}
                       </div>
                       <div className="text-[10px] text-[var(--ink-3)]">

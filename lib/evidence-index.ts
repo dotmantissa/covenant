@@ -1,7 +1,7 @@
 import { alerts,covenantTests,evidenceCursors,testReceipts,db,type Covenant } from '@/lib/db';
 import { addresses,readView,readClient,assertExecuted,decodeContractResult } from '@/lib/chain';
 import { matchesSnapshot,returnedFinding } from '@/lib/evidence-proof';
-import { transactionsStatusNumberToName, type GenLayerTransaction } from 'genlayer-js/types';
+import { transactionsStatusNumberToName, type TransactionHash } from 'genlayer-js/types';
 import { and,eq,inArray } from 'drizzle-orm';
 
 type Snapshot=Record<string,unknown>&{facility_id:string;covenant_index:number;sequence:number};
@@ -44,19 +44,25 @@ async function indexReceipts(facilityId:string):Promise<void> {
   const hashes=transactions.map(t=>String(t.hash??''));
   const saved=hashes.length?await db().select().from(testReceipts).where(inArray(testReceipts.txHash,hashes)):[];
   const known=new Set(saved.map(r=>r.txHash));
+  let fetched=0;
   for(const raw of transactions) {
     if(raw.status!=='FINALIZED'&&(transactionsStatusNumberToName as Record<number,string>)[Number(raw.status)]!=='FINALIZED')continue;
     const hash=String(raw.hash??'');if(known.has(hash)||!/^0x[0-9a-f]{64}$/i.test(hash))continue;
-    const receipt=raw as unknown as GenLayerTransaction;
-    try {assertExecuted('historical adjudication',receipt);} catch {continue;}
-    const returned=decodeContractResult(receipt.consensus_data?.leader_receipt?.[0]?.result);
-    const finding=returnedFinding(returned);if(!finding||finding.facility_id!==facilityId)continue;
-    const original=snapshots.find(s=>s.sequence===finding.sequence&&s.covenantIndex===finding.covenant_index);
+    // Studio list.result contains contract return bytes, not the consensus enum.
+    const summary=raw.consensus_data as {leader_receipt?:{result:unknown}[]}|undefined;
+    let candidate:Record<string,unknown>|null;
+    try{candidate=returnedFinding(decodeContractResult(summary?.leader_receipt?.[0]?.result));}catch{continue;}
+    if(!candidate||candidate.facility_id!==facilityId)continue;
+    const original=snapshots.find(s=>s.sequence===candidate.sequence&&s.covenantIndex===candidate.covenant_index);
     if(!original?.chainSnapshot)continue;
+    if(fetched++>=5)break;
+    const receipt=await readClient().getTransaction({hash:hash as TransactionHash});
+    try{assertExecuted('historical adjudication',receipt);}catch{continue;}
+    const returned=decodeContractResult(receipt.consensus_data?.leader_receipt?.[0]?.result);
     if(!matchesSnapshot(returned,original.chainSnapshot))throw new Error('Receipt does not match the immutable chain adjudication');
     const consensus=raw.consensus_data as {votes?:Record<string,string>;leader_receipt?:{node_config?:{address?:string}}[]};
     await db().insert(testReceipts).values({txHash:hash,sequence:original.sequence,facilityId,covenantIndex:original.covenantIndex,
-      validatorVotes:consensus.votes??{},leaderAddress:consensus.leader_receipt?.[0]?.node_config?.address??null,receipt:raw}).onConflictDoNothing();
+      validatorVotes:consensus.votes??{},leaderAddress:consensus.leader_receipt?.[0]?.node_config?.address??null,receipt:JSON.parse(JSON.stringify({hash,status:receipt.statusName,consensusResult:receipt.result,executionResult:receipt.consensus_data?.leader_receipt?.[0]?.execution_result,returnEnvelope:receipt.consensus_data?.leader_receipt?.[0]?.result},(_key,value)=>typeof value==='bigint'?value.toString():value))}).onConflictDoNothing();
   }
   lastScan=Date.now();
 }
