@@ -11,8 +11,8 @@
  *    receipt, so that is the field `assertExecuted` reads. Treating a FINALIZED
  *    status as success silently passes reverted writes.
  *  - A failed poll is not a failed write. Studionet drops connections under its
- *    rate limit, so `withRetry` retries transient transport errors and rethrows
- *    anything that names a real on-chain outcome.
+ *    rate limit, so `withRetry` retries reads and receipt polls. Writes are
+ *    submitted once to avoid re-signing a possibly accepted value transfer.
  */
 import "@/lib/net";
 import { createAccount, createClient } from "genlayer-js";
@@ -161,6 +161,9 @@ export function assertExecuted(label: string, receipt: GenLayerTransaction): voi
         "so success cannot be confirmed",
     );
   }
+  if (execution !== "SUCCESS") {
+    throw new Error(`${label} reported an unrecognized execution result: ${execution}`);
+  }
 }
 
 /**
@@ -212,14 +215,14 @@ export async function sendWrite(
   args: unknown[] = [],
   value = 0n,
 ): Promise<WriteResult> {
-  const hash = await withRetry(label, () =>
-    client.writeContract({
-      address,
-      functionName,
-      args: args as never[],
-      value,
-    }),
-  );
+  // A lost submission response may already have committed the signed write.
+  // Retrying writeContract can assign a new nonce and duplicate a value payment.
+  const hash = await client.writeContract({
+    address,
+    functionName,
+    args: args as never[],
+    value,
+  });
   const receipt = await withRetry(`${label} receipt`, () =>
     client.waitForTransactionReceipt({
       hash: hash as TransactionHash,

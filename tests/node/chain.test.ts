@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertExecuted, ContractRevert, withRetry } from "../../lib/chain";
+import { assertExecuted, ContractRevert, sendWrite, withRetry } from "../../lib/chain";
 import type { GenLayerTransaction } from "genlayer-js/types";
 
 describe("assertExecuted", () => {
@@ -157,5 +157,24 @@ describe("emitted settlement", () => {
     await assert.rejects(
       waitForEmittedTransactions(client, `0x${"1".repeat(64)}` as import("genlayer-js/types").TransactionHash, "test"), ContractRevert,
     );
+  });
+});
+
+
+describe("write submission integrity", () => {
+  it("never re-signs an ambiguous value submission", async () => {
+    let submissions = 0;
+    const client = {
+      writeContract: async () => { submissions++; throw new Error("fetch failed"); },
+    } as unknown as import("../../lib/chain").Client;
+    await assert.rejects(sendWrite(client, "repay", `0x${"1".repeat(40)}`, "repay", ["facility"], 1n), /fetch failed/);
+    assert.equal(submissions, 1);
+  });
+
+  it("rejects an unknown execution result despite finalization", () => {
+    const receipt = { statusName: "FINALIZED", consensus_data: {
+      leader_receipt: [{ execution_result: "UNKNOWN" }],
+    } } as unknown as GenLayerTransaction;
+    assert.throws(() => assertExecuted("repay", receipt), /unrecognized execution result/);
   });
 });

@@ -1,11 +1,15 @@
 {
   "network": "studionet",
   "chainId": 61999,
-  "deployer": "0x8cc1de23F0bf16a59631B260CDEDBDe855b078D5",
-  "deployedAt": "2026-10-07T02:27:27.099Z",
+  "deployer": "0xBC1399c55538eC034d4Da550C03c34Ae0C357f53",
   "contracts": {
-    "facilityRegistry": "0x535b9510E7946D1106D27766359a136847eB6eFc",
-    "covenantMonitor": "0x4273F7e4CFF3B1cd6069F7ED5f4cb7493889E9aE",
-    "creditVault": "0x80Aa7EfAec29239d38a318293339473FbD2B0855"
+    "facilityRegistry": "0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184",
+    "covenantMonitor": "0xCf43f89ea873e856Be28ad373e62022Bf756a91F",
+    "creditVault": "0xA8b087ff6229ADD096fc72BDFF297480C9ECc984"
+  },
+  "sourceHashes": {
+    "facilityRegistry": "014810832fd4688bb1a99c6b44318bbc5205f2be1a221af00001bad9143f7fa1",
+    "covenantMonitor": "5e6e8c01394087a3b822904b8c91ab6b7fc3bff117c60cc188b32fa68af13a61",
+    "creditVault": "e18a0265bc5573ad114417a47cd0d6c8ba623ff3f0f812b1feb5b2ef28a32f74"
   }
 }

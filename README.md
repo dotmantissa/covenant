@@ -54,9 +54,9 @@ The protocol separates agreement state, consensus monitoring, and capital custod
 
 All three contracts are deployed and wired together on GenLayer Studionet (Chain ID 61999):
 
-- FacilityRegistry: `0xC384bE0556c26dD54c1b2c5B182Ac20A846f88eE`
-- CovenantMonitor: `0x6b3aD61180782562963d9CAC9F659B090fdD7A7c`
-- CreditVault: `0x40e637C87fa0B7E671ecD3e47b9beD7318E12865`
+- FacilityRegistry: `0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184`
+- CovenantMonitor: `0xCf43f89ea873e856Be28ad373e62022Bf756a91F`
+- CreditVault: `0xA8b087ff6229ADD096fc72BDFF297480C9ECc984`
 
 Wiring verification is confirmed on-chain by reading `get_wiring()` across all three contracts.
 
@@ -66,7 +66,7 @@ Covenant provides a consumer-grade experience without requiring browser wallet e
 - Authentication is email-only, handled via Privy.
 - Each user account deterministically maps to a dedicated GenLayer address via HKDF-SHA256 over a server master secret and the unique user identifier.
 - Server-side transactions are signed on demand using `genlayer-js`.
-- Studionet transactions are gasless, so user accounts require no faucet funding.
+- Studionet transaction submission is gasless; commitments, repayments, and appeal bonds still require funded native balances.
 - Strict smart contract access control is maintained: facilities distinguish between lender and borrower accounts.
 
 ## Local Setup
@@ -100,9 +100,9 @@ Required variables:
 - `PRIVY_APP_SECRET`: Privy application secret
 - `SIGNER_MASTER_SECRET`: 64-character hex secret for HKDF key derivation
 - `NEXT_PUBLIC_STUDIONET_RPC_URL`: `https://studio.genlayer.com/api`
-- `NEXT_PUBLIC_FACILITY_REGISTRY_ADDRESS`: `0xC384bE0556c26dD54c1b2c5B182Ac20A846f88eE`
-- `NEXT_PUBLIC_COVENANT_MONITOR_ADDRESS`: `0x6b3aD61180782562963d9CAC9F659B090fdD7A7c`
-- `NEXT_PUBLIC_CREDIT_VAULT_ADDRESS`: `0x40e637C87fa0B7E671ecD3e47b9beD7318E12865`
+- `NEXT_PUBLIC_FACILITY_REGISTRY_ADDRESS`: `0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184`
+- `NEXT_PUBLIC_COVENANT_MONITOR_ADDRESS`: `0xCf43f89ea873e856Be28ad373e62022Bf756a91F`
+- `NEXT_PUBLIC_CREDIT_VAULT_ADDRESS`: `0xA8b087ff6229ADD096fc72BDFF297480C9ECc984`
 
 4. Push the schema to Postgres:
 ```bash
@@ -166,12 +166,13 @@ npm run build
 ## Reviewer remediation and reproducible evidence
 
 The corrected contracts use finalized messages for enforcement, registry updates,
-bond payouts, drawdowns, surplus refunds and withdrawals. Each receiving contract
-rejects stale revisions. The monitor owns the cure clock and restrictions, avoiding
+bond payouts, drawdowns, surplus refunds and withdrawals. Account payouts use
+the external native transfer interface; IC emit_transfer cannot deliver to EOAs. Each receiving contract
+rejects stale revisions. Agreement terms and exact borrower consent arrive through authenticated registry messages emitted on finalization; no decision relies on an unfinalized registry read. Draws also require acknowledgement of the monitor’s latest revision, so an accepted clean appeal cannot grant rights before its finalized settlement. The monitor owns the cure clock and restrictions, avoiding
 a dependency on asynchronously updated registry records. The application waits for
 the emitted transaction tree to finalize and succeed before reporting settlement.
 If a child write fails, anyone can call `CovenantMonitor.sync_enforcement(facility_id)`;
-it retries the latest snapshot without paying a bond twice.
+it retries the latest snapshot without paying a bond twice. Registry `sync_agreement(facility_id)` similarly retries immutable agreement and authorized covenant delivery without resetting cure clocks or admitting drafts.
 
 The root `TASKS.md` is a local, Git-ignored recovery checklist. Validation commands:
 
