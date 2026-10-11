@@ -14,3 +14,8 @@ TASKS.tmp
 evidence/*diagnostic.json
 evidence/*preflight.json
 *.log
+audit-artifacts/
+.review-envelope-journal.json*
+.deploy-journal.json*
+test-results/
+playwright-report/

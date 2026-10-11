@@ -39,7 +39,7 @@ let lastScan=0;
 async function indexReceipts(facilityId:string):Promise<void> {
   // Source snapshots always progress; receipt enrichment is separately retryable.
   if(Date.now()-lastScan<20_000)return;
-  const transactions=await readClient().request({method:'sim_getTransactionsForAddress',params:[addresses().covenantMonitor,'to']}) as unknown as Record<string,unknown>[];
+  const transactions=await readClient().request({method:'sim_getTransactionsForAddress',params:[addresses().covenantMonitor]}) as unknown as Record<string,unknown>[];
   const snapshots=await db().select().from(covenantTests).where(eq(covenantTests.facilityId,facilityId));
   const hashes=transactions.map(t=>String(t.hash??''));
   const saved=hashes.length?await db().select().from(testReceipts).where(inArray(testReceipts.txHash,hashes)):[];
