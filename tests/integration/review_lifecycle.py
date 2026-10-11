@@ -102,10 +102,14 @@ class ReviewRun:
         assert receipt.get("status_name") == "FINALIZED" or receipt["status"] == 7, (label, receipt["status"])
         leaders = receipt.get("consensus_data", {}).get("leader_receipt", [])
         record["receipt"] = {k: receipt[k] for k in
-            ("hash", "status", "status_name", "to_address", "data", "triggered_transactions") if k in receipt}
+            ("hash", "status", "status_name", "to_address", "data", "triggered_transactions", "leader_only", "execution_mode") if k in receipt}
         record["receipt"]["consensus_data"] = {"leader_receipt": [
             {k: leader[k] for k in ("execution_result", "error", "result", "pending_transactions", "pending_eth_transactions", "vote", "mode") if k in leader}
             for leader in leaders]}
+        record["receipt"]["consensus_data"]["validators"] = [
+            {k: validator[k] for k in ("execution_result", "vote", "mode") if k in validator}
+            for validator in receipt.get("consensus_data", {}).get("validators", [])]
+        record["receipt"]["consensus_data"]["votes"] = receipt.get("consensus_data", {}).get("votes", {})
         receipt = record["receipt"]
         save(self.data)
         self.children(label, receipt)
@@ -287,12 +291,37 @@ class ReviewRun:
             restored = self.read("creditVault", "get_position", [fid])
             assert int(restored["drawn_atto"]) == 11 * GEN
             self.check("restored_rights", restored)
+        vault_address = self.data["contracts"]["creditVault"]
+        if "cleanup/repay" not in self.data["steps"]:
+            self.data["cleanupBefore"] = {"borrower": str(self.balance(self.borrower.address))}
+            save(self.data)
         self.write("cleanup/repay", "creditVault", "repay", [fid], 12 * GEN, borrower=True)
+        if "cleanup_repayment" not in self.data["checks"]:
+            earned = int(self.read("creditVault", "get_interest_collected", [fid])["interest_collected_atto"])
+            assert earned > 0
+            assert self.balance(self.borrower.address) - int(self.data["cleanupBefore"]["borrower"]) == -11 * GEN - earned
+            assert self.balance(vault_address) == 100 * GEN + earned
+            self.check("cleanup_repayment", {"principalAtto": str(11 * GEN), "earnedInterestAtto": str(earned),
+                "payerSurplusAtto": str(GEN - earned)})
+        earned = int(self.data["checks"]["cleanup_repayment"]["earnedInterestAtto"])
+        if "cleanup/interest" not in self.data["steps"]:
+            self.data["cleanupInterestBefore"] = str(self.balance(self.lender.address))
+            save(self.data)
         self.write("cleanup/interest", "creditVault", "withdraw_interest", [fid, 0])
+        if "cleanup_interest" not in self.data["checks"]:
+            assert self.balance(self.lender.address) - int(self.data["cleanupInterestBefore"]) == earned
+            assert self.balance(vault_address) == 100 * GEN
+            self.check("cleanup_interest", {"lenderDeltaAtto": str(earned)})
+        if "cleanup/capital" not in self.data["steps"]:
+            self.data["capitalBefore"] = str(self.balance(self.lender.address))
+            save(self.data)
         self.write("cleanup/capital", "creditVault", "withdraw_free_capital", [fid, 100 * GEN])
-        assert self.balance(self.data["contracts"]["creditVault"]) == 0
+        assert self.balance(self.lender.address) - int(self.data["capitalBefore"]) == 100 * GEN
+        assert self.balance(vault_address) == 0
+        assert self.balance(self.data["contracts"]["covenantMonitor"]) == 0
         self.check("final_settlement", {"vaultBalanceAtto": "0", "monitorBalanceAtto": "0",
-            "position": self.read("creditVault", "get_position", [fid])})
+            "lenderCapitalDeltaAtto": str(100 * GEN), "position": self.read("creditVault", "get_position", [fid])})
+
 
 
 if __name__ == "__main__":

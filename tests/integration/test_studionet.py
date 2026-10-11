@@ -90,7 +90,7 @@ def test_studionet_create_facility_and_covenant():
         1_000_000_000_000_000_000_000,  # 1000 tokens
         750,                            # 7.5% base
         200,                            # 2.0% step-up
-        "https://eth.llamarpc.com",
+        "https://ethereum-rpc.publicnode.com",
         "0x0000000000000000000000000000000000000001",
         "https://governance.example.com",
     ]).transact()
@@ -136,3 +136,5 @@ def test_studionet_create_facility_and_covenant():
     assert cov["threshold_bp"] == 30000
     assert cov["comparator"] == "lte"
     assert cov["breach_consequence"] == "rate_step_up"
+
+    assert not cov["borrower_authorized"]

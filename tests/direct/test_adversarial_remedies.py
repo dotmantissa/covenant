@@ -496,3 +496,21 @@ def test_lost_consent_can_be_recovered_without_blanket_authorization(funded, dir
     monitor.test_covenant(FACILITY_ID, index)
     with direct_vm.expect_revert("not authorized by borrower"):
         monitor.test_covenant(FACILITY_ID, unapproved)
+
+
+def test_accepted_clean_appeal_cannot_grant_draw_before_finalized_settlement(funded, direct_vm):
+    monitor, vault, wiring = funded["monitor"], funded["vault"], funded["wiring"]
+    prose(direct_vm, holds=False)
+    monitor.test_covenant(FACILITY_ID, COVENANT_PROSE)
+    # The breach child has not reached the vault. A later accepted appeal is clean.
+    bond(funded, direct_vm, COVENANT_PROSE)
+    direct_vm.clear_mocks()
+    prose(direct_vm, holds=True)
+    monitor.resolve_appeal(FACILITY_ID, COVENANT_PROSE)
+    assert not monitor.get_enforcement_state(FACILITY_ID)["restrictions"]
+    assert not vault.get_position(FACILITY_ID)["accelerated"]
+    with direct_vm.expect_revert("finalized covenant settlement is pending"):
+        vault.draw(FACILITY_ID, GEN)
+    wiring.drain()
+    vault.draw(FACILITY_ID, GEN)
+    assert vault.get_position(FACILITY_ID)["drawn_atto"] == str(GEN)

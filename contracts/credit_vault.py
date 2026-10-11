@@ -257,6 +257,8 @@ class CreditVault(gl.Contract):
             state = gl.get_contract_at(self.monitor).view().get_enforcement_state(position.facility_id)
             require(not state["restrictions"],
                     "draws are stopped while covenant enforcement is pending")
+            require(int(state["revision"]) <= int(self.enforcement_revisions.get(position.facility_id, u256(0))),
+                    "finalized covenant settlement is pending")
         require(not position.accelerated, "this facility has been accelerated")
         require(
             not position.draw_frozen,

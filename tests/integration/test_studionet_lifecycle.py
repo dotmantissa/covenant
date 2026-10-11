@@ -5,10 +5,13 @@ network, recheck execution outcomes, and verify the complete recorded message tr
 """
 import hashlib
 import json
+import time
 from pathlib import Path
 
 import pytest
 from gltest import get_contract_factory
+from genlayer_py import create_client
+from genlayer_py.chains import studionet
 from genlayer_py.assertions import tx_execution_succeeded
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +27,15 @@ def evidence():
 
 
 def test_review_receipts_include_consensus_children_and_reverts(evidence):
+    client = create_client(chain=studionet)
     for name, step in evidence["steps"].items():
+        live = client.get_transaction(step["hash"])
+        assert live["status_name"] == "FINALIZED", name
+        assert live.get("leader_only") is False, name
+        assert live.get("execution_mode") == "NORMAL", name
+        assert tx_execution_succeeded(live) == step["expectedSuccess"], name
+        assert live.get("triggered_transactions", []) == step["receipt"].get("triggered_transactions", []), name
+        time.sleep(2)  # respect hosted request limits while rechecking every receipt
         receipt = step["receipt"]
         assert receipt["status_name"] == "FINALIZED", name
         assert tx_execution_succeeded(receipt) == step["expectedSuccess"], name
@@ -78,3 +89,9 @@ def test_recorded_economic_deltas_and_appeal_preserve_debt(evidence):
     assert int(reversal["position"]["drawn_atto"]) == 10 * 10**18
     assert int(reversal["borrowerBondDeltaAtto"]) == 10**18
     assert int(checks["restored_rights"]["drawn_atto"]) == 11 * 10**18
+
+
+def test_complete_lender_recovery(evidence):
+    checks = evidence["checks"]
+    assert checks["cleanup_interest"]["lenderDeltaAtto"] == checks["cleanup_repayment"]["earnedInterestAtto"]
+    assert int(checks["final_settlement"]["lenderCapitalDeltaAtto"]) == 100 * 10**18
