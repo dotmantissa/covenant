@@ -56,9 +56,9 @@ The [live application](https://covenant-ten-sable.vercel.app) uses the corrected
 
 All three contracts are deployed and wired together on GenLayer Studionet (Chain ID 61999):
 
-- FacilityRegistry: `0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184`
-- CovenantMonitor: `0xCf43f89ea873e856Be28ad373e62022Bf756a91F`
-- CreditVault: `0xA8b087ff6229ADD096fc72BDFF297480C9ECc984`
+- FacilityRegistry: `0x4f3CE228C0f497d87c9704a7bC0e19dcBA83752A`
+- CovenantMonitor: `0xF2e101942009Da72eAC90b3a2a89B147ecC3E8E0`
+- CreditVault: `0x75d6f6E7B62fb0DE0A635bBd8bcd5EcC89C7a1da`
 
 Wiring verification is confirmed on-chain by reading `get_wiring()` across all three contracts.
 
@@ -102,9 +102,9 @@ Required variables:
 - `PRIVY_APP_SECRET`: Privy application secret
 - `SIGNER_MASTER_SECRET`: 64-character hex secret for HKDF key derivation
 - `NEXT_PUBLIC_STUDIONET_RPC_URL`: `https://studio.genlayer.com/api`
-- `NEXT_PUBLIC_FACILITY_REGISTRY_ADDRESS`: `0x4A9ef4c962c9e8e6c60c9e562f4795B27719e184`
-- `NEXT_PUBLIC_COVENANT_MONITOR_ADDRESS`: `0xCf43f89ea873e856Be28ad373e62022Bf756a91F`
-- `NEXT_PUBLIC_CREDIT_VAULT_ADDRESS`: `0xA8b087ff6229ADD096fc72BDFF297480C9ECc984`
+- `NEXT_PUBLIC_FACILITY_REGISTRY_ADDRESS`: `0x4f3CE228C0f497d87c9704a7bC0e19dcBA83752A`
+- `NEXT_PUBLIC_COVENANT_MONITOR_ADDRESS`: `0xF2e101942009Da72eAC90b3a2a89B147ecC3E8E0`
+- `NEXT_PUBLIC_CREDIT_VAULT_ADDRESS`: `0x75d6f6E7B62fb0DE0A635bBd8bcd5EcC89C7a1da`
 
 4. Push the schema to Postgres:
 ```bash
