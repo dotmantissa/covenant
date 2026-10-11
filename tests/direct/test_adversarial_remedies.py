@@ -391,3 +391,32 @@ def test_pooled_vault_preserves_other_facility_capital(funded, direct_vm, direct
     vault.draw("other-facility", 100 * GEN)
     assert wiring.balance_of(vault.address_bytes) == 0
     assert int(vault.get_position("other-facility")["drawn_atto"]) == 100 * GEN
+
+
+def test_unfinalized_borrower_consent_cannot_authorize_enforcement(funded, direct_vm):
+    from conftest import _encode_ok
+    registry, monitor, wiring = funded["registry"], funded["monitor"], funded["wiring"]
+    direct_vm.sender = funded["lender"]
+    index = draft(registry)
+    direct_vm.sender = funded["borrower"]
+    registry.approve_covenant(FACILITY_ID, index)
+    original = wiring.hook
+
+    def pending_consent(vm, request):
+        spec = request.get("CallContract", {})
+        if spec.get("calldata", {}).get("method") == "get_test_parameters":
+            assert spec["state"] == 1  # LATEST_FINAL
+            params = registry.get_test_parameters(FACILITY_ID, index)
+            params["borrower_authorized"] = False  # approval is accepted, not final
+            return _encode_ok(params)
+        return original(vm, request)
+
+    direct_vm._gl_call_hook = pending_consent
+    with direct_vm.expect_revert("not authorized by borrower"):
+        monitor.test_covenant(FACILITY_ID, index)
+    assert wiring.deferred == []
+    direct_vm._gl_call_hook = original
+    healthy_ratio(direct_vm)
+    monitor.test_covenant(FACILITY_ID, index)
+    registry_reads = [r for r in wiring.read_requests if bytes(r["address"].as_bytes) == registry.address_bytes]
+    assert registry_reads and all(r["state"] == 1 for r in registry_reads)

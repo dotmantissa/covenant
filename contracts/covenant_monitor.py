@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from genlayer import *
+from genlayer.py.public_abi import StorageType
 
 ERROR_EXPECTED = "[EXPECTED]"
 ERROR_EXTERNAL = "[EXTERNAL]"
@@ -1006,14 +1007,14 @@ class CovenantMonitor(gl.Contract):
     # ------------------------------------------------------------- plumbing
 
     def _read_parameters(self, facility_id: str, covenant_index: int) -> dict:
-        params = gl.get_contract_at(self.registry).view().get_test_parameters(
+        params = gl.get_contract_at(self.registry).view(state=StorageType.LATEST_FINAL).get_test_parameters(
             facility_id, int(covenant_index)
         )
         require(isinstance(params, dict), "registry returned no parameters")
         return params
 
     def _read_facility(self, facility_id: str) -> dict:
-        facility = gl.get_contract_at(self.registry).view().get_facility(facility_id)
+        facility = gl.get_contract_at(self.registry).view(state=StorageType.LATEST_FINAL).get_facility(facility_id)
         require(isinstance(facility, dict), "registry returned no facility")
         return facility
 

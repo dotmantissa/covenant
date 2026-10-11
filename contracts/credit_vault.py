@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from genlayer import *
+from genlayer.py.public_abi import StorageType
 
 ERROR_EXPECTED = "[EXPECTED]"
 
@@ -513,7 +514,7 @@ class CreditVault(gl.Contract):
         return self.positions[key]
 
     def _read_facility(self, facility_id: str) -> dict:
-        facility = gl.get_contract_at(self.registry).view().get_facility(facility_id)
+        facility = gl.get_contract_at(self.registry).view(state=StorageType.LATEST_FINAL).get_facility(facility_id)
         require(isinstance(facility, dict), "registry returned no facility")
         return facility
 

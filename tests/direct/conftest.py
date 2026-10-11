@@ -101,6 +101,7 @@ class Wiring:
         self.transfers = []
         self.deferred = []
         self.messages = []
+        self.read_requests = []
 
     # ------------------------------------------------------------ bookkeeping
 
@@ -204,6 +205,7 @@ class Wiring:
 
         if "CallContract" in request:
             spec = request["CallContract"]
+            self.read_requests.append(dict(spec))
             target = _as_bytes(spec["address"])
             if target not in self.contracts:
                 return _encode_user_error(f"no contract at {spec['address']}")
