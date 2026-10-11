@@ -1,4 +1,4 @@
-import { waitForIntent, type PendingIntent } from "@/lib/client-transactions";
+import { waitForIntent, IntentExecutionError, type PendingIntent } from "@/lib/client-transactions";
 /**
  * Client-side fetch helper that attaches Privy auth tokens and unwraps API responses.
  */
@@ -38,11 +38,17 @@ export async function apiFetch<T>(
   }
 
   if(isWrite && 'intentId' in data) {
+    try {
     const result=await waitForIntent<T>(data as PendingIntent,token,fetch,undefined, intent=>{
       if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("covenant:transaction",{detail:intent}));
     });
     if(typeof window!=="undefined")localStorage.removeItem(storageKey);
     return result;
+    } catch(error) {
+      // A root revert applied no effects. Descendant failure may already have moved funds.
+      if(error instanceof IntentExecutionError && ['failed','reverted'].includes(error.status) && typeof window!=="undefined")localStorage.removeItem(storageKey);
+      throw error;
+    }
   }
   return data as T;
 }

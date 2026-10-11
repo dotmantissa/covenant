@@ -35,6 +35,11 @@ type EvidenceDetailResponse = {
     narrative: string;
     consequenceApplied: string;
     txHash: string | null;
+    contentHash: string;
+    appealStatus: string;
+    proofStatus: string;
+    explorerUrl: string | null;
+    validatorVotes: Record<string,string>|null;
     leaderAddress: string | null;
     triggeredBy: string;
     createdAt: string;
@@ -329,6 +334,7 @@ export default function EvidenceCitationPage({
       </section>
 
       {/* On-Chain Transaction Metadata */}
+      <div className="text-xs font-mono break-all">Evidence SHA256: {test.contentHash || "native-chain proof"}<br/>Appeal: {test.appealStatus}<br/>Receipt: {test.proofStatus}<br/>{test.explorerUrl && <a href={test.explorerUrl} target="_blank" rel="noreferrer" className="underline">Open finalized transaction in GenLayer Explorer</a>}<br/>Validator votes: {test.validatorVotes ? Object.entries(test.validatorVotes).map(([address,vote])=>`${address}: ${vote}`).join("; ") : "receipt indexing pending"}</div>
       {test.txHash && (
         <section className="p-4 rounded bg-[var(--paper-2)] border border-[var(--rule)] space-y-2 text-xs font-mono">
           <div className="text-[10px] uppercase text-[var(--ink-3)]">

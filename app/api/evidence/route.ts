@@ -1,3 +1,5 @@
+import { withReceiptProof } from "@/lib/evidence-read";
+import { syncFacility,currentFacilityIds } from "@/lib/sync";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { optionalActor } from "@/lib/auth";
 import { covenantTests, db } from "@/lib/db";
@@ -12,6 +14,10 @@ export async function GET(request: Request) {
     const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "25", 10)));
     const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10));
 
+    if(facilityId) {
+      if(!(await currentFacilityIds()).has(facilityId))return jsonResponse({error:"facility not found"},404);
+      await syncFacility(facilityId);
+    }
     let whereClause = undefined;
 
     if (facilityId && covenantIndexStr !== null) {
@@ -32,7 +38,7 @@ export async function GET(request: Request) {
       .limit(limit)
       .offset(offset);
 
-    return jsonResponse({ evidence: rows });
+    return jsonResponse({ evidence: await withReceiptProof(rows) });
   } catch (error) {
     return handleRouteError(error);
   }

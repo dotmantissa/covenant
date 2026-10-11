@@ -211,6 +211,9 @@ export const covenantTests = deployment.table(
     /** Human readable account of the test, rendered by the contract. */
     narrative: text("narrative").notNull().default(""),
     consequenceApplied: text("consequence_applied").notNull().default(""),
+    contentHash: text("content_hash").notNull().default(""),
+    chainSnapshot: jsonb("chain_snapshot").$type<Record<string, unknown>>(),
+    appealStatus: text("appeal_status").notNull().default("none"),
 
     // How the network reached it.
     txHash: text("tx_hash"),
@@ -318,3 +321,15 @@ export const alertReads = deployment.table("alert_reads", {
   alertId:integer("alert_id").notNull().references(()=>alerts.id,{onDelete:"cascade"}),
   actorDid:text("actor_did").notNull(),readAt:timestamp("read_at",{withTimezone:true}).notNull().defaultNow(),
 }, table=>[unique("alert_reads_recipient_key").on(table.alertId,table.actorDid)]);
+
+/** Receipts are append-only and cannot rewrite a consensus finding. */
+export const testReceipts = deployment.table("test_receipts", {
+  txHash: text("tx_hash").primaryKey(), sequence: integer("sequence").notNull(),
+  facilityId: text("facility_id").notNull(), covenantIndex: integer("covenant_index").notNull(),
+  validatorVotes: jsonb("validator_votes").$type<Record<string,string>>().notNull(),
+  leaderAddress: text("leader_address"), receipt: jsonb("receipt").$type<Record<string,unknown>>().notNull(),
+  indexedAt: timestamp("indexed_at",{withTimezone:true}).notNull().defaultNow(),
+});
+export const evidenceCursors = deployment.table("evidence_cursors",{
+  facilityId:text("facility_id").primaryKey(),sequence:integer("sequence").notNull().default(0),
+});

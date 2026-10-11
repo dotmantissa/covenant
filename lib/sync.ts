@@ -6,10 +6,8 @@
  * exhausting Studionet's rate limits.
  */
 import {
-  alerts,
   ensureDatabase,
   covenants,
-  covenantTests,
   db,
   facilities,
   positions,
@@ -18,6 +16,7 @@ import {
   type Position,
 } from "@/lib/db";
 import { addresses, readView } from "@/lib/chain";
+import { indexFacilityEvidence } from "@/lib/evidence-index";
 
 type RawChainFacility = {
   facility_id: string;
@@ -286,6 +285,7 @@ export async function syncFacility(
     if (saved) savedCovenants.push(saved);
   }
 
+  await indexFacilityEvidence(facilityId, savedCovenants);
   return {
     facility: savedFacility,
     position: savedPosition,
@@ -305,110 +305,3 @@ export async function syncAllFacilities(): Promise<string[]> {
   return ids;
 }
 
-export type RecordFindingInput = {
-  facilityId: string;
-  covenantIndex: number;
-  sequence: number;
-  kind: string;
-  testedAt: string;
-  breached: boolean;
-  status: string;
-  sourceUrls: string[];
-  citation: string;
-  locator: string;
-  asOf: string;
-  numeratorMilli: string;
-  denominatorMilli: string;
-  observedBp: number;
-  observedAtto: string;
-  thresholdBp: number;
-  narrative: string;
-  consequenceApplied: string;
-  txHash?: string;
-  validatorVotes?: Record<string, string>;
-  leaderAddress?: string;
-  triggeredBy: "schedule" | "manual" | "api";
-};
-
-/**
- * Writes an immutable evidence row for a completed covenant test and generates
- * notifications for breach and cure status changes.
- */
-export async function recordTestEvidence(input: RecordFindingInput): Promise<number> {
-  const [row] = await db()
-    .insert(covenantTests)
-    .values({
-      facilityId: input.facilityId,
-      covenantIndex: input.covenantIndex,
-      sequence: input.sequence,
-      kind: input.kind,
-      testedAt: input.testedAt,
-      breached: input.breached,
-      status: input.status,
-      sourceUrls: input.sourceUrls,
-      citation: input.citation,
-      locator: input.locator,
-      asOf: input.asOf,
-      numeratorMilli: input.numeratorMilli,
-      denominatorMilli: input.denominatorMilli,
-      observedBp: input.observedBp,
-      observedAtto: input.observedAtto,
-      thresholdBp: input.thresholdBp,
-      narrative: input.narrative,
-      consequenceApplied: input.consequenceApplied,
-      txHash: input.txHash ?? null,
-      validatorVotes: input.validatorVotes ?? null,
-      leaderAddress: input.leaderAddress ?? null,
-      triggeredBy: input.triggeredBy,
-    })
-    .onConflictDoUpdate({
-      target: [
-        covenantTests.facilityId,
-        covenantTests.covenantIndex,
-        covenantTests.sequence,
-      ],
-      set: {
-        narrative: input.narrative,
-        consequenceApplied: input.consequenceApplied,
-        txHash: input.txHash ?? null,
-      },
-    })
-    .returning();
-
-  const testId = row?.id;
-
-  // Create alert entries if this was a notable state transition
-  if (input.breached) {
-    const isPending = input.status === "breach_pending_cure";
-    await db().insert(alerts).values({
-      facilityId: input.facilityId,
-      covenantIndex: input.covenantIndex,
-      kind: isPending ? "cure_open" : "breach",
-      severity: isPending ? "warning" : "critical",
-      title: isPending
-        ? `Covenant #${input.covenantIndex} offside (cure window opened)`
-        : `Covenant #${input.covenantIndex} breached`,
-      body: input.narrative,
-      testId: testId ?? null,
-      audience: "both",
-    });
-
-    if (input.consequenceApplied && input.consequenceApplied !== "none") {
-      await db().insert(alerts).values({
-        facilityId: input.facilityId,
-        covenantIndex: input.covenantIndex,
-        kind: "enforcement",
-        severity: "critical",
-        title: `Enforcement applied: ${input.consequenceApplied.replace(/_/g, " ")}`,
-        body: `Triggered by test finding: ${input.narrative}`,
-        testId: testId ?? null,
-        audience: "both",
-      });
-    }
-  }
-
-  // Refresh read cache for this facility
-  await syncFacility(input.facilityId);
-
-  return testId ?? 0;
-}

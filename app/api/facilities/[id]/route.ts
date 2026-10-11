@@ -1,3 +1,4 @@
+import { withReceiptProof } from "@/lib/evidence-read";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { actorsByAddress, optionalActor } from "@/lib/auth";
 import { alerts, covenants, covenantTests, db, facilities, positions } from "@/lib/db";
@@ -91,7 +92,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       },
       position: position ?? null,
       covenants: covRows,
-      tests,
+      tests: await withReceiptProof(tests),
       alerts: facilityAlerts,
     });
   } catch (error) {

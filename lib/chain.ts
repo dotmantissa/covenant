@@ -28,6 +28,7 @@ import type {
   GenLayerTransaction,
   TransactionHash,
 } from "genlayer-js/types";
+import { TransactionHashVariant } from "genlayer-js/types";
 import { contractAddresses, genlayerNetwork } from "@/lib/env";
 import { deriveAccount } from "@/lib/signer";
 
@@ -202,7 +203,7 @@ export async function readView<T>(
   args: unknown[] = [],
 ): Promise<T> {
   const result = await withRetry(`${functionName} read`, () =>
-    readClient().readContract({ address, functionName, args: args as never[] }),
+    readClient().readContract({ address, functionName, args: args as never[], transactionHashVariant: TransactionHashVariant.LATEST_FINAL }),
   );
   return result as T;
 }

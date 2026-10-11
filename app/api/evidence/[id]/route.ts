@@ -1,3 +1,4 @@
+import { withReceiptProof } from "@/lib/evidence-read";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { optionalActor } from "@/lib/auth";
 import { covenants, covenantTests, db, facilities } from "@/lib/db";
@@ -45,7 +46,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       .limit(1);
 
     return jsonResponse({
-      test,
+      test: (await withReceiptProof([test]))[0],
       facility: facility ?? null,
       covenant: covenant ?? null,
     });

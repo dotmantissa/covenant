@@ -157,6 +157,14 @@ export function schemaStatements(schema = deploymentSchema()): string[] {
     `ALTER TABLE "${schema}".covenants ADD COLUMN IF NOT EXISTS enforcement_consequence text NOT NULL DEFAULT ''`,
     `ALTER TABLE "${schema}".covenants ADD COLUMN IF NOT EXISTS evidence_max_age_days integer NOT NULL DEFAULT 120`,
     `ALTER TABLE "${schema}".covenants ADD COLUMN IF NOT EXISTS reporting_schedule text NOT NULL DEFAULT ''`,
+    `ALTER TABLE "${schema}".covenant_tests ADD COLUMN IF NOT EXISTS content_hash text NOT NULL DEFAULT ''`,
+    `ALTER TABLE "${schema}".covenant_tests ADD COLUMN IF NOT EXISTS chain_snapshot jsonb`,
+    `ALTER TABLE "${schema}".covenant_tests ADD COLUMN IF NOT EXISTS appeal_status text NOT NULL DEFAULT 'none'`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS alerts_test_kind_key ON "${schema}".alerts(test_id,kind)`,
+    `CREATE TABLE IF NOT EXISTS "${schema}".test_receipts (tx_hash text PRIMARY KEY, sequence integer NOT NULL,
+       facility_id text NOT NULL,covenant_index integer NOT NULL,validator_votes jsonb NOT NULL,
+       leader_address text,receipt jsonb NOT NULL,indexed_at timestamptz NOT NULL DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS "${schema}".evidence_cursors (facility_id text PRIMARY KEY,sequence integer NOT NULL DEFAULT 0)`,
     `ALTER TABLE "${schema}".positions ADD COLUMN IF NOT EXISTS collected_interest_atto numeric(78,0) NOT NULL DEFAULT 0`,
   ];
 }
