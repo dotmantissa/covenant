@@ -38,7 +38,9 @@ export async function apiFetch<T>(
   }
 
   if(isWrite && 'intentId' in data) {
-    const result=await waitForIntent<T>(data as PendingIntent,token);
+    const result=await waitForIntent<T>(data as PendingIntent,token,fetch,undefined, intent=>{
+      if(typeof window!=="undefined")window.dispatchEvent(new CustomEvent("covenant:transaction",{detail:intent}));
+    });
     if(typeof window!=="undefined")localStorage.removeItem(storageKey);
     return result;
   }

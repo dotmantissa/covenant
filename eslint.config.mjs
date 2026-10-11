@@ -7,6 +7,7 @@ const config = [
       ".next/**",
       "node_modules/**",
       "artifacts/**",
+      "audit-artifacts/**",
       ".venv/**",
       "drizzle/**",
       "next-env.d.ts",

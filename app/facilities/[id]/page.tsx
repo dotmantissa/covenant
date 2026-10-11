@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { decimalUnits, integerInput, exactDecimal } from "@/lib/amounts";
+import { canAppeal, waitForIntent, recoverAndRefresh, type PendingIntent } from "@/lib/client-transactions";
 import { apiFetch } from "@/lib/client-api";
 import { formatAddress, formatAtto, formatBp, formatIsoDate } from "@/lib/format";
 import { PageLoading } from "@/components/spinner";
@@ -31,6 +32,7 @@ type FacilityDetail = {
   treasuryAddress: string;
   governanceUrl: string;
   chainCreatedAt: string;
+  syncedAt: string;
   lenderEmail: string | null;
   borrowerEmail: string | null;
 };
@@ -39,6 +41,7 @@ type PositionDetail = {
   committedAtto: string;
   drawnAtto: string;
   accruedInterestAtto: string;
+  collectedInterestAtto: string;
   effectiveRateBp: number;
   drawFrozen: boolean;
   accelerated: boolean;
@@ -99,6 +102,8 @@ export default function FacilityConsolePage({
   const [position, setPosition] = useState<PositionDetail | null>(null);
   const [covenants, setCovenants] = useState<CovenantDetail[]>([]);
   const [tests, setTests] = useState<TestRow[]>([]);
+  const [actorAddress,setActorAddress]=useState<string|null>(null);
+  const [pending,setPending]=useState<PendingIntent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -136,18 +141,22 @@ export default function FacilityConsolePage({
       const token = authenticated ? await getAccessToken() : null;
       const url = `/api/facilities/${encodeURIComponent(facilityId)}${refreshFromChain ? "?refresh=true" : ""}`;
       const res = await apiFetch<{
+        actorAddress: string|null;
         facility: FacilityDetail;
         position: PositionDetail | null;
         covenants: CovenantDetail[];
         tests: TestRow[];
       }>(url, {}, token);
 
+      setActorAddress(res.actorAddress);
       setFacility(res.facility);
       setPosition(res.position);
       setCovenants(res.covenants);
       setTests(res.tests);
+      return res;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load facility data");
+      if(refreshFromChain)throw err;
     } finally {
       setLoading(false);
     }
@@ -155,12 +164,41 @@ export default function FacilityConsolePage({
 
   useEffect(() => {
     if (ready) {
-      void loadData();
+      void loadData().catch(()=>{});
     }
   }, [ready, loadData]);
 
+  useEffect(() => {
+    if(!ready || !authenticated)return;
+    const controller=new AbortController();
+    const observe=(intent:PendingIntent)=>{
+      if(controller.signal.aborted || intent.facilityId!==facilityId)return;
+      setPending(previous=>[...previous.filter(p=>p.intentId!==intent.intentId),
+        ...(['confirmed','failed','reverted'].includes(intent.status)?[]:[intent])]);
+    };
+    const event=(event:Event)=>observe((event as CustomEvent<PendingIntent>).detail);
+    window.addEventListener('covenant:transaction',event);
+    void (async()=>{
+      const token=await getAccessToken();
+      const saved=await apiFetch<{transactions:PendingIntent[]}>(`/api/transactions?facilityId=${encodeURIComponent(facilityId)}`,{},token);
+      if(controller.signal.aborted)return;
+      setPending(saved.transactions);
+      for(const intent of saved.transactions) {
+        if(intent.status==='settlement_failed')continue;
+        await recoverAndRefresh(intent,
+          item=>waitForIntent<PendingIntent>(item,token,fetch,undefined,observe,controller.signal),
+          ()=>loadData(true),()=>{});
+        if(!controller.signal.aborted) {
+          setPending(previous=>previous.filter(p=>p.intentId!==intent.intentId));
+          setActionSuccess(`Saved ${intent.label.replace(/_/g,' ')} transaction confirmed; facility refreshed from chain.`);
+        }
+      }
+    })().catch(error=>{if(!controller.signal.aborted)setError(error instanceof Error?error.message:'Unable to recover saved transactions.');});
+    return()=>{controller.abort();window.removeEventListener('covenant:transaction',event);};
+  },[ready,authenticated,facilityId,getAccessToken,loadData]);
+
   const amountPreview = (value: string, unit: string) => {
-    try { return `Exact amount: ${exactDecimal(decimalUnits(value).toString())} ${unit}`; }
+    try { return `Exact amount: ${exactDecimal(decimalUnits(value,18,modalType==="withdraw-interest").toString())} ${unit}`; }
     catch { return "Enter a positive decimal amount with at most18 fractional digits."; }
   };
 
@@ -173,7 +211,7 @@ export default function FacilityConsolePage({
 
     try {
       const token = await getAccessToken();
-      const amountAtto = decimalUnits(actionAmountGen).toString();
+      const amountAtto = decimalUnits(actionAmountGen,18,modalType==="withdraw-interest").toString();
 
       await apiFetch(
         `/api/facilities/${encodeURIComponent(facilityId)}/${modalType}`,
@@ -196,6 +234,7 @@ export default function FacilityConsolePage({
   };
 
   const handleApproveCovenant = async (index: number) => {
+    setActionLoading(true);setError(null);
     try {
       const token = await getAccessToken();
       await apiFetch(`/api/facilities/${encodeURIComponent(facilityId)}/covenants/${index}/approve`,
@@ -204,7 +243,7 @@ export default function FacilityConsolePage({
       await loadData(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to approve covenant");
-    }
+    } finally {setActionLoading(false);}
   };
 
   // Handle Covenant Drafting
@@ -347,6 +386,10 @@ export default function FacilityConsolePage({
 
   const isAccelerated = facility.status === "accelerating" || position?.accelerated;
   const isDrawFrozen = facility.status === "draw_stopped" || position?.drawFrozen;
+  const isLender=actorAddress?.toLowerCase()===facility.lenderAddress.toLowerCase();
+  const isBorrower=actorAddress?.toLowerCase()===facility.borrowerAddress.toLowerCase();
+  const isParty=isLender || isBorrower;
+  const busy=actionLoading || pending.some(p=>p.status!=="settlement_failed");
   const committedVal = position ? BigInt(position.committedAtto || "0") : 0n;
   const drawnVal = position ? BigInt(position.drawnAtto || "0") : 0n;
   const availableVal = committedVal > drawnVal ? committedVal - drawnVal : 0n;
@@ -365,7 +408,7 @@ export default function FacilityConsolePage({
 
         <button
           type="button"
-          onClick={() => void loadData(true)}
+          onClick={() => void loadData(true).catch(()=>{})}
           className="inline-flex items-center gap-1.5 text-xs text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${actionLoading ? "animate-spin" : ""}`} />
@@ -373,6 +416,15 @@ export default function FacilityConsolePage({
         </button>
       </div>
 
+      {error && <div role="alert" className="p-3 rounded border border-[var(--breach)] text-sm text-[var(--breach)]">{error}</div>}
+      {actionError && !modalType && <div role="alert" className="p-3 text-sm text-[var(--breach)]">{actionError}</div>}
+      {pending.length>0 && <div role="status" className="p-3 border border-[var(--rule)] text-sm space-y-2">
+        <p>Saved transactions are being checked. Reconnecting resumes the same transaction.</p>
+        {pending.map(intent=><div key={intent.intentId}>{intent.label.replace(/_/g,' ')}: {intent.status}
+          {intent.txHash && <a href={`https://explorer-studio.genlayer.com/tx/${intent.txHash}`} target="_blank" rel="noreferrer" className="underline ml-2">View transaction</a>}
+          {intent.error && <p>{intent.error}</p>}
+        </div>)}
+      </div>}
       {actionSuccess && (
         <div className="p-3 rounded bg-[var(--paper-2)] border border-[var(--signal)] text-xs text-[var(--signal-ink)] flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -404,14 +456,15 @@ export default function FacilityConsolePage({
               </span>
             </div>
             <div className="font-serif text-base text-[var(--ink-2)] italic">
-              {facility.borrowerName} {facility.purpose && `(${facility.purpose})`}
+              Last synchronized: {formatIsoDate(facility.syncedAt)}. {facility.borrowerName} {facility.purpose && `(${facility.purpose})`}
             </div>
           </div>
 
-          {authenticated && (
+          {isParty && (
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
+                disabled={!isLender || busy}
                 onClick={() => { setModalType("commit"); setActionAmountGen("100"); }}
                 className="px-3 py-1.5 rounded bg-[var(--ink)] text-[var(--paper)] text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
               >
@@ -419,7 +472,7 @@ export default function FacilityConsolePage({
               </button>
               <button
                 type="button"
-                disabled={Boolean(isDrawFrozen || isAccelerated || availableVal <= 0n)}
+                disabled={Boolean(!isBorrower || busy || isDrawFrozen || isAccelerated || availableVal <= 0n)}
                 onClick={() => { setModalType("draw"); setActionAmountGen("50"); }}
                 className="px-3 py-1.5 rounded border border-[var(--rule)] text-[var(--ink)] text-xs font-medium hover:bg-[var(--paper-2)] disabled:opacity-40 transition-colors cursor-pointer"
               >
@@ -427,7 +480,7 @@ export default function FacilityConsolePage({
               </button>
               <button
                 type="button"
-                disabled={drawnVal <= 0n}
+                disabled={!isBorrower || busy || (drawnVal <= 0n && BigInt(position?.accruedInterestAtto??"0")===0n)}
                 onClick={() => { setModalType("repay"); setActionAmountGen("10"); }}
                 className="px-3 py-1.5 rounded border border-[var(--rule)] text-[var(--ink)] text-xs font-medium hover:bg-[var(--paper-2)] disabled:opacity-40 transition-colors cursor-pointer"
               >
@@ -435,13 +488,15 @@ export default function FacilityConsolePage({
               </button>
               <button
                 type="button"
+                disabled={!isLender || busy}
                 onClick={() => { setModalType("withdraw"); setActionAmountGen("50"); }}
                 className="px-3 py-1.5 rounded border border-[var(--rule)] text-[var(--ink-2)] text-xs font-medium hover:text-[var(--ink)] hover:bg-[var(--paper-2)] transition-colors cursor-pointer"
               >
                 Withdraw Free
               </button>
               <button type="button"
-                onClick={() => { setModalType("withdraw-interest"); setActionAmountGen("0"); }}
+                disabled={!isLender || busy || BigInt(position?.collectedInterestAtto??"0")===0n}
+                onClick={() => { setModalType("withdraw-interest"); setActionAmountGen(exactDecimal(position?.collectedInterestAtto??"0")); }}
                 className="px-3 py-1.5 rounded border border-[var(--rule)] text-[var(--ink)] text-xs cursor-pointer">
                 Withdraw Earned Interest
               </button>
@@ -541,9 +596,10 @@ export default function FacilityConsolePage({
             </div>
           </div>
 
-          {authenticated && (
+          {isLender && (
             <button
               type="button"
+              disabled={busy}
               onClick={() => setModalType("add_covenant")}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-[var(--ink)] text-[var(--paper)] text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
             >
@@ -558,9 +614,10 @@ export default function FacilityConsolePage({
             <div className="font-serif italic text-sm text-[var(--ink-2)]">
               No covenants attached to this credit agreement yet.
             </div>
-            {authenticated && (
+            {isLender && (
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => setModalType("add_covenant")}
                 className="text-xs text-[var(--ink)] underline underline-offset-2 hover:opacity-80"
               >
@@ -598,6 +655,10 @@ export default function FacilityConsolePage({
                         <td className="py-4 px-4 space-y-1">
                           <div className="font-serif text-[13px] text-[var(--ink)] leading-snug">
                             &ldquo;{c.text}&rdquo;
+                            {c.enforcementConsequence && <p className="text-[var(--breach)]">Active restriction: {c.enforcementConsequence.replace(/_/g," ")}</p>}
+                            {c.kind==="ratio" && <p>Evidence age limit: {c.evidenceMaxAgeDays} days; nonnegative figures, positive denominator.</p>}
+                            {c.kind==="filing" && <p>Calendar quarterly reports; latest expired inclusive filing deadline.</p>}
+                            {c.sourceUrls.map(url=><a key={url} href={url} target="_blank" rel="noreferrer" className="block underline truncate max-w-60">{url}</a>)}
                           </div>
                           {c.sourceUrls.length > 0 && (
                             <div className="text-[10px] font-mono text-[var(--ink-3)] truncate max-w-xs">
@@ -655,7 +716,7 @@ export default function FacilityConsolePage({
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              disabled={c.status === "pending_authorization" || hasAppeal}
+                              disabled={busy || !isParty || c.status==="pending_authorization" || hasAppeal}
                               onClick={() => void handleTestCovenant(c.covenantIndex)}
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[var(--rule)] hover:bg-[var(--paper-2)] text-[var(--ink)] text-[11px] font-medium transition-colors cursor-pointer"
                               title="Trigger consensus test on chain"
@@ -664,16 +725,17 @@ export default function FacilityConsolePage({
                               <span>Test</span>
                             </button>
 
-                            {c.status === "pending_authorization" && authenticated && (
-                              <button type="button" onClick={() => void handleApproveCovenant(c.covenantIndex)}
+                            {c.status === "pending_authorization" && isBorrower && (
+                              <button type="button" disabled={busy} onClick={() => void handleApproveCovenant(c.covenantIndex)}
                                 className="px-2.5 py-1 rounded border border-[var(--rule)] text-[11px] cursor-pointer"
                                 title="Only the borrower can accept these exact covenant terms">
                                 Approve Terms
                               </button>
                             )}
-                            {isOffside && !hasAppeal && authenticated && (
+                            {canAppeal(c) && !hasAppeal && isBorrower && (
                               <button
                                 type="button"
+                                disabled={busy}
                                 onClick={() => {
                                   setSelectedCovenantIndex(c.covenantIndex);
                                   setModalType("appeal");
@@ -687,6 +749,7 @@ export default function FacilityConsolePage({
                             {hasAppeal && authenticated && (
                               <button
                                 type="button"
+                                disabled={busy}
                                 onClick={() => void handleResolveAppeal(c.covenantIndex)}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[var(--rule)] text-[var(--ink)] text-[11px] font-medium hover:bg-[var(--paper-2)] transition-colors cursor-pointer"
                               >

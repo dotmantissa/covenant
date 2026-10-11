@@ -10,7 +10,7 @@ type RouteParams = {
 
 export async function GET(request: Request, { params }: RouteParams) {
   try {
-    await optionalActor(request);
+    const actor=await optionalActor(request);
     const { id: facilityId } = await params;
     if (!(await currentFacilityIds()).has(facilityId)) {
       return jsonResponse({ error: "facility not found" }, 404);
@@ -23,6 +23,7 @@ export async function GET(request: Request, { params }: RouteParams) {
         await syncFacility(facilityId);
       } catch (e) {
         console.warn(`Could not refresh facility ${facilityId} from chain:`, e);
+        return jsonResponse({error:"Chain refresh failed. Previously cached data has not been confirmed current."},503);
       }
     }
 
@@ -40,6 +41,7 @@ export async function GET(request: Request, { params }: RouteParams) {
           facility: synced.facility,
           position: synced.position ?? null,
           covenants: synced.covenants,
+          actorAddress:actor?.address??null,
           tests: [],
           alerts: [],
         });
@@ -80,6 +82,7 @@ export async function GET(request: Request, { params }: RouteParams) {
     ]);
 
     return jsonResponse({
+      actorAddress:actor?.address??null,
       facility: {
         ...facility,
         lenderEmail: usersMap.get(facility.lenderAddress.toLowerCase())?.email ?? null,
