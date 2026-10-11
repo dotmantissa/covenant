@@ -307,6 +307,7 @@ export const transactionIntents = deployment.table("transaction_intents", {
   address: text("address").notNull(), status: text("status").notNull().default("preparing"),
   signedTransaction: text("signed_transaction"), broadcastHash: text("broadcast_hash"), txHash: text("tx_hash"),
   returned: jsonb("returned"), error: text("error"),
+  settlementProgress:jsonb("settlement_progress").$type<Record<string,{parent:string;children:string[]}>>().notNull().default({}),
   payload: jsonb("payload").$type<{args:unknown[];value:string}>().notNull(),
   createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
   updatedAt: timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),

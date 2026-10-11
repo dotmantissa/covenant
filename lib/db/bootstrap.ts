@@ -152,6 +152,7 @@ export function schemaStatements(schema = deploymentSchema()): string[] {
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE(actor_did, request_key))`,
     `ALTER TABLE "${schema}".transaction_intents ADD COLUMN IF NOT EXISTS payload jsonb NOT NULL DEFAULT '{"args":[],"value":"0"}'`,
+    `ALTER TABLE "${schema}".transaction_intents ADD COLUMN IF NOT EXISTS settlement_progress jsonb NOT NULL DEFAULT '{}'`,
     `CREATE TABLE IF NOT EXISTS "${schema}".operation_locks (key text PRIMARY KEY, holder text NOT NULL, expires_at timestamptz NOT NULL)`,
     `ALTER TABLE "${schema}".covenants ADD COLUMN IF NOT EXISTS terms_digest text NOT NULL DEFAULT ''`,
     `ALTER TABLE "${schema}".covenants ADD COLUMN IF NOT EXISTS enforcement_consequence text NOT NULL DEFAULT ''`,

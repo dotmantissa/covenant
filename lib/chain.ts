@@ -306,7 +306,7 @@ export function decodeContractResult(value: unknown): unknown {
 }
 
 /** Bounded observation; polling is driven by durable intents instead of HTTP sleeps. */
-export async function inspectSettlement(client: Client, hash: TransactionHash, label: string): Promise<GenLayerTransaction | null> {
+export async function inspectSettlement(client: Client, hash: TransactionHash, label: string, progress: Record<string, {parent:string;children:string[]}> = {}, maxNewReceipts = 12): Promise<GenLayerTransaction | null> {
   const root = await client.getTransaction({ hash });
   if (nameOf(root.statusName, root.status, transactionsStatusNumberToName) !== "FINALIZED") return null;
   try { assertExecuted(label, root); }
@@ -314,11 +314,18 @@ export async function inspectSettlement(client: Client, hash: TransactionHash, l
   const queue: { hash: TransactionHash; parent: string }[] = [];
   for (const child of await client.getTriggeredTransactionIds({hash})) queue.push({hash:child,parent:hash});
   const seen = new Set<string>();
+  let reads=0;
   while (queue.length) {
-    if (seen.size >= 100) throw new Error("settlement graph exceeds the bounded observer limit");
     const item = queue.shift()!;
     if (seen.has(item.hash)) continue;
     seen.add(item.hash);
+    const cached=progress[item.hash];
+    if(cached) {
+      if(cached.parent!==item.parent)throw new SettlementFailure("Settlement parent linkage changed");
+      for(const child of cached.children)queue.push({hash:child as TransactionHash,parent:item.hash});
+      continue;
+    }
+    if(reads++>=maxNewReceipts)return null;
     const receipt = await client.getTransaction({ hash:item.hash });
     if (nameOf(receipt.statusName, receipt.status, transactionsStatusNumberToName) !== "FINALIZED") return null;
     const settlement = !receipt.consensus_data
@@ -326,7 +333,9 @@ export async function inspectSettlement(client: Client, hash: TransactionHash, l
       : receipt;
     try { assertSettlementChild(`${label} settlement ${item.hash}`,settlement,item.parent); }
     catch(error) { throw new SettlementFailure(error instanceof Error?error.message:"Settlement failed"); }
-    for (const child of await client.getTriggeredTransactionIds({hash:item.hash})) queue.push({hash:child,parent:item.hash});
+    const children=await client.getTriggeredTransactionIds({hash:item.hash});
+    progress[item.hash]={parent:item.parent,children};
+    for (const child of children) queue.push({hash:child,parent:item.hash});
   }
   return root;
 }

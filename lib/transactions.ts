@@ -118,14 +118,15 @@ export async function pollIntent(id: string, actorDid: string) {
     }
     if(!row.txHash)return publicIntent(row);
     let receipt;
-    try { receipt=await inspectSettlement(readClient(),row.txHash as TransactionHash,row.label); }
+    const progress=row.settlementProgress;
+    try { receipt=await inspectSettlement(readClient(),row.txHash as TransactionHash,row.label,progress); }
     catch(error) {
       if(error instanceof ContractRevert || error instanceof SettlementFailure) {
         const childFailure=error instanceof SettlementFailure;
         return publicIntent(await patch(id,{status:childFailure?"settlement_failed":"reverted",error:error.message}));
       }
       throw error;
-    }
+    } finally {await patch(id,{settlementProgress:progress});}
     if(!receipt)return publicIntent(await patch(id,{status:"pending",error:null}));
     const returned=decodeContractResult(receipt.consensus_data?.leader_receipt?.[0]?.result);
     row=await patch(id,{status:"refresh_pending",returned,error:null});
