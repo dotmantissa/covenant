@@ -139,6 +139,8 @@ class CreditVault(gl.Contract):
     interest_collected_atto: TreeMap[str, u256]
     enforcement_revisions: TreeMap[str, u256]
     facility_restrictions: TreeMap[str, str]
+    rate_history: TreeMap[str, str]
+    interest_remainders: TreeMap[str, u256]
 
     def __init__(self, registry_address: str) -> None:
         self.owner = gl.message.sender_address
@@ -224,6 +226,7 @@ class CreditVault(gl.Contract):
             self.position_ids.append(key)
 
         position = self.positions[key]
+        self._require_settled(key)
         self._apply_position_restrictions(position, block_now())
         committed = int(position.committed_atto) + amount
         require(
@@ -255,7 +258,8 @@ class CreditVault(gl.Contract):
         require(amount > 0, "a draw needs an amount")
         if self.monitor != ZERO_ADDRESS:
             state = gl.get_contract_at(self.monitor).view().get_enforcement_state(position.facility_id)
-            require(not state["restrictions"],
+            require(not any(item["consequence"] in (CONSEQUENCE_DRAW_STOP, CONSEQUENCE_ACCELERATION)
+                            for item in state["restrictions"]),
                     "draws are stopped while covenant enforcement is pending")
             require(int(state["revision"]) <= int(self.enforcement_revisions.get(position.facility_id, u256(0))),
                     "finalized covenant settlement is pending")
@@ -291,6 +295,7 @@ class CreditVault(gl.Contract):
         Interest paid is tracked for lender withdrawal.
         """
         position = self._position(facility_id)
+        self._require_settled(position.facility_id)
         amount = int(gl.message.value)
         require(amount > 0, "send the amount you want to repay")
 
@@ -336,6 +341,7 @@ class CreditVault(gl.Contract):
     def withdraw_free_capital(self, facility_id: str, amount_atto: int) -> dict:
         """Lender pulls back capital that has not been drawn."""
         position = self._position(facility_id)
+        self._require_settled(position.facility_id)
         require(
             gl.message.sender_address == position.lender,
             "only the lender can withdraw capital",
@@ -363,6 +369,7 @@ class CreditVault(gl.Contract):
     def withdraw_interest(self, facility_id: str, amount_atto: int = 0) -> dict:
         """Lender withdraws earned interest covered by borrower repayments."""
         position = self._position(facility_id)
+        self._require_settled(position.facility_id)
         require(
             gl.message.sender_address == position.lender,
             "only the lender can withdraw interest",
@@ -386,7 +393,7 @@ class CreditVault(gl.Contract):
     # --------------------------------------------------------- enforcement
 
     @gl.public.write
-    def apply_enforcement(self, facility_id: str, revision: int, restrictions: list) -> dict:
+    def apply_enforcement(self, facility_id: str, revision: int, restrictions: list, events: list = []) -> dict:
         """Apply a finalized full snapshot once, regardless of message ordering.
 
         Each covenant owns its restriction. A clean covenant or successful
@@ -398,8 +405,25 @@ class CreditVault(gl.Contract):
         key = facility_id.strip()
         self._read_facility(key)
         require(revision > 0, "enforcement requires a revision")
-        if revision <= int(self.enforcement_revisions.get(key, u256(0))):
+        acknowledged = int(self.enforcement_revisions.get(key, u256(0)))
+        if revision <= acknowledged:
+            current = json.loads(self.facility_restrictions.get(key, "[]"))
+            self._set_facility_status(key, self._status_for_restrictions(current), acknowledged)
             return {"facility_id": key, "applied": False, "reason": "stale revision"}
+        require(len(events) > 0 and int(events[-1]["revision"]) == revision and
+                events[-1]["restrictions"] == restrictions, "complete enforcement history is required")
+        old = json.loads(self.rate_history.get(key, "[]"))
+        require(events[:len(old)] == old, "enforcement history is immutable")
+        previous_revision = 0
+        previous_time = ""
+        for event in events:
+            require(int(event["revision"]) > previous_revision and event["at"] >= previous_time and
+                    event["at"] <= block_now(), "invalid enforcement chronology")
+            for item in event["restrictions"]:
+                require(item["consequence"] in VALID_CONSEQUENCES, "unknown consequence")
+            previous_revision = int(event["revision"])
+            previous_time = event["at"]
+        self.rate_history[key] = json.dumps(events, sort_keys=True)
         for item in restrictions:
             require(item["consequence"] in VALID_CONSEQUENCES, "unknown consequence")
             require(int(item["covenant_index"]) >= 0, "invalid covenant index")
@@ -414,7 +438,8 @@ class CreditVault(gl.Contract):
     def _status_for_restrictions(self, restrictions: list) -> str:
         if any(item["consequence"] == CONSEQUENCE_ACCELERATION for item in restrictions):
             return FACILITY_ACCELERATING
-        return FACILITY_DRAW_STOPPED if restrictions else FACILITY_ACTIVE
+        return FACILITY_DRAW_STOPPED if any(item["consequence"] == CONSEQUENCE_DRAW_STOP
+                                           for item in restrictions) else FACILITY_ACTIVE
 
     def _apply_position_restrictions(self, position: Position, now: str) -> None:
         restrictions = json.loads(self.facility_restrictions.get(position.facility_id, "[]"))
@@ -422,7 +447,8 @@ class CreditVault(gl.Contract):
         rate_before = int(position.current_rate_bp)
         accelerated_before = position.accelerated
         frozen_before = position.draw_frozen
-        position.draw_frozen = bool(restrictions)
+        position.draw_frozen = any(item["consequence"] in (CONSEQUENCE_DRAW_STOP, CONSEQUENCE_ACCELERATION)
+                                   for item in restrictions)
         position.accelerated = any(item["consequence"] == CONSEQUENCE_ACCELERATION
                                    for item in restrictions)
         stepped = any(item["consequence"] == CONSEQUENCE_RATE_STEP_UP for item in restrictions)
@@ -481,11 +507,7 @@ class CreditVault(gl.Contract):
         """What the borrower owes if they settled at the current block time."""
         position = self._position(facility_id)
         now = block_now()
-        pending = interest_for(
-            int(position.drawn_atto),
-            int(position.current_rate_bp),
-            seconds_between(position.last_accrual_at, now),
-        )
+        pending = self._interest_numerator(position, now) // (BP_DENOMINATOR * SECONDS_PER_YEAR)
         interest = int(position.interest_accrued_atto) + pending
         return {
             "facility_id": position.facility_id,
@@ -508,17 +530,36 @@ class CreditVault(gl.Contract):
 
     # ------------------------------------------------------------- internals
 
+    def _require_settled(self, facility_id: str) -> None:
+        # Nonfinal peer state is used only to deny; it never grants a right or installs a rate.
+        if self.monitor != ZERO_ADDRESS:
+            state = gl.get_contract_at(self.monitor).view().get_enforcement_state(facility_id)
+            require(int(state["revision"]) <= int(self.enforcement_revisions.get(facility_id, u256(0))),
+                    "finalized covenant settlement is pending")
+
+    def _interest_numerator(self, position: Position, now: str) -> int:
+        cursor = position.last_accrual_at
+        rate = int(position.base_rate_bp)
+        numerator = int(self.interest_remainders.get(position.facility_id, u256(0)))
+        for event in json.loads(self.rate_history.get(position.facility_id, "[]")):
+            at = str(event["at"])
+            if at > now:
+                break
+            if at > cursor:
+                numerator += int(position.drawn_atto) * rate * seconds_between(cursor, at)
+                cursor = at
+            stepped = any(item["consequence"] == CONSEQUENCE_RATE_STEP_UP for item in event["restrictions"])
+            rate = int(position.base_rate_bp) + (int(position.step_up_bp) if stepped else 0)
+        numerator += int(position.drawn_atto) * rate * seconds_between(cursor, now)
+        return numerator
+
     def _accrue(self, position: Position, now: str) -> None:
-        elapsed = seconds_between(position.last_accrual_at, now)
-        if elapsed <= 0:
+        if now <= position.last_accrual_at:
             return
-        earned = interest_for(
-            int(position.drawn_atto), int(position.current_rate_bp), elapsed
-        )
-        if earned > 0:
-            position.interest_accrued_atto = u256(
-                int(position.interest_accrued_atto) + earned
-            )
+        numerator = self._interest_numerator(position, now)
+        denominator = BP_DENOMINATOR * SECONDS_PER_YEAR
+        self.interest_remainders[position.facility_id] = u256(numerator % denominator)
+        position.interest_accrued_atto = u256(int(position.interest_accrued_atto) + numerator // denominator)
         position.last_accrual_at = now
 
     def _position(self, facility_id: str) -> Position:

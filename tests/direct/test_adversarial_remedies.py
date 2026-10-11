@@ -169,10 +169,10 @@ def test_appeal_removes_only_disputed_restriction(funded, direct_vm, other):
     monitor.resolve_appeal(FACILITY_ID, COVENANT_PROSE)
     funded["wiring"].drain()
     position = funded["vault"].get_position(FACILITY_ID)
-    assert position["draw_frozen"]
+    assert position["draw_frozen"] == (other != "rate_step_up")
     assert position["accelerated"] == (other == "acceleration")
     assert position["current_rate_bp"] == (1250 if other == "rate_step_up" else 850)
-    expected = "accelerating" if other == "acceleration" else "draw_stopped"
+    expected = "accelerating" if other == "acceleration" else "active" if other == "rate_step_up" else "draw_stopped"
     assert registry.get_facility(FACILITY_ID)["status"] == expected
 
 

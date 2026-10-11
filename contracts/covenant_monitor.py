@@ -653,6 +653,8 @@ class CovenantMonitor(gl.Contract):
     facility_revisions: TreeMap[str, u256]
     appeal_revisions: TreeMap[str, u256]
     appeal_outcomes: TreeMap[str, str]
+    enforcement_history: TreeMap[str, str]
+    test_history: TreeMap[str, str]
 
     def __init__(self, registry_address: str) -> None:
         self.owner = gl.message.sender_address
@@ -786,22 +788,12 @@ class CovenantMonitor(gl.Contract):
         self.restrictions[key] = consequence
         self._persist(facility_id, covenant_index, kind, now, reading, status,
                       threshold_bp, consequence)
+        snapshot = self._finding_dict(self.findings[key])
+        snapshot["under_appeal"] = under_appeal
+        self.test_history[str(int(self.test_total))] = json.dumps(snapshot, sort_keys=True)
         self._settle(facility_id, covenant_index, status, reading, consequence)
 
-        return {
-            "facility_id": facility_id,
-            "covenant_index": int(covenant_index),
-            "kind": kind,
-            "tested_at": now,
-            "status": status,
-            "breached": bool(reading["breached"]),
-            "observed_bp": int(reading["observed_bp"]),
-            "observed_atto": str(int(reading["observed_atto"])),
-            "threshold_bp": threshold_bp,
-            "citation": str(reading["citation"]),
-            "narrative": str(reading["narrative"]),
-            "consequence_applied": consequence,
-        }
+        return self._finding_dict(self.findings[key])
 
     # -------------------------------------------------------------- appeals
 
@@ -880,7 +872,13 @@ class CovenantMonitor(gl.Contract):
             0,
             revision,
         )
+        stored = json.loads(self.test_history[str(outcome["sequence"])])
+        stored["appeal_status"] = APPEAL_UPHELD if upheld else APPEAL_OVERTURNED
+        stored["bond_atto"] = str(bond)
+        stored["bond_paid_to"] = recipient.as_hex
+        self.test_history[str(outcome["sequence"])] = json.dumps(stored, sort_keys=True)
         return {
+            "finding": stored,
             "facility_id": facility_id,
             "covenant_index": int(covenant_index),
             "appeal_status": APPEAL_UPHELD if upheld else APPEAL_OVERTURNED,
@@ -903,6 +901,18 @@ class CovenantMonitor(gl.Contract):
             self._finding_dict(self.findings[self.finding_keys[i]])
             for i in range(len(self.finding_keys))
         ]
+
+    @gl.public.view
+    def get_test(self, sequence: int) -> dict:
+        require(str(sequence) in self.test_history, "test sequence does not exist")
+        return json.loads(self.test_history[str(sequence)])
+
+    @gl.public.view
+    def list_tests(self, after_sequence: int = 0, limit: int = 50) -> dict:
+        require(after_sequence >= 0 and 1 <= limit <= 100, "invalid history page")
+        last = min(int(self.test_total), after_sequence + limit)
+        return {"tests": [json.loads(self.test_history[str(i)]) for i in range(after_sequence + 1, last + 1)],
+                "next_sequence": last, "total": int(self.test_total)}
 
     @gl.public.view
     def get_appeal_bond(self, facility_id: str, covenant_index: int) -> str:
@@ -1115,6 +1125,10 @@ class CovenantMonitor(gl.Contract):
         finding = self.findings[key]
         revision = int(finding.sequence)
         self.facility_revisions[facility_id] = u256(revision)
+        state = self.get_enforcement_state(facility_id)
+        history = json.loads(self.enforcement_history.get(facility_id, "[]"))
+        history.append({"revision": revision, "at": finding.tested_at, "restrictions": state["restrictions"]})
+        self.enforcement_history[facility_id] = json.dumps(history, sort_keys=True)
         gl.get_contract_at(self.registry).emit(on="finalized").record_test_result(
             facility_id, int(covenant_index), status,
             int(finding.observed_bp), int(finding.observed_atto), finding.citation,
@@ -1123,7 +1137,7 @@ class CovenantMonitor(gl.Contract):
         if self.vault != ZERO_ADDRESS:
             state = self.get_enforcement_state(facility_id)
             gl.get_contract_at(self.vault).emit(on="finalized").apply_enforcement(
-                facility_id, revision, state["restrictions"]
+                facility_id, revision, state["restrictions"], state["events"]
             )
 
     @gl.public.write
@@ -1150,7 +1164,7 @@ class CovenantMonitor(gl.Contract):
                 )
         if self.vault != ZERO_ADDRESS and state["revision"] > 0:
             gl.get_contract_at(self.vault).emit(on="finalized").apply_enforcement(
-                key, state["revision"], state["restrictions"]
+                key, state["revision"], state["restrictions"], state["events"]
             )
 
     @gl.public.view
@@ -1167,7 +1181,8 @@ class CovenantMonitor(gl.Contract):
                                      "consequence": consequence})
         return {"facility_id": key,
                 "revision": int(self.facility_revisions.get(key, u256(0))),
-                "restrictions": restrictions}
+                "restrictions": restrictions,
+                "events": json.loads(self.enforcement_history.get(key, "[]"))}
 
     def _finding_dict(self, finding: Finding) -> dict:
         return {
