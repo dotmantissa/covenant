@@ -124,3 +124,38 @@ describe("withRetry", () => {
     assert.equal(calls, 2);
   });
 });
+
+describe("emitted settlement", () => {
+  it("waits for every child and grandchild before completing", async () => {
+    const { waitForEmittedTransactions } = await import("../../lib/chain");
+    const root = `0x${"1".repeat(64)}` as const;
+    const child = `0x${"2".repeat(64)}` as const;
+    const grandchild = `0x${"3".repeat(64)}` as const;
+    const waited: string[] = [];
+    const client = {
+      getTriggeredTransactionIds: async ({ hash }: { hash: string }) =>
+        hash === root ? [child] : hash === child ? [grandchild] : [],
+      waitForTransactionReceipt: async ({ hash }: { hash: string }) => {
+        waited.push(hash);
+        return { statusName: "FINALIZED", consensus_data: {
+          leader_receipt: [{ execution_result: "SUCCESS" }],
+        } };
+      },
+    } as unknown as import("../../lib/chain").Client;
+    await waitForEmittedTransactions(client, root as import("genlayer-js/types").TransactionHash, "test");
+    assert.deepEqual(waited, [child, grandchild]);
+  });
+
+  it("rejects a failed settlement child even when its parent succeeded", async () => {
+    const { waitForEmittedTransactions } = await import("../../lib/chain");
+    const client = {
+      getTriggeredTransactionIds: async () => [`0x${"2".repeat(64)}`],
+      waitForTransactionReceipt: async () => ({ statusName: "FINALIZED", consensus_data: {
+        leader_receipt: [{ execution_result: "ERROR", error: "UserError: transfer failed" }],
+      } }),
+    } as unknown as import("../../lib/chain").Client;
+    await assert.rejects(
+      waitForEmittedTransactions(client, `0x${"1".repeat(64)}` as import("genlayer-js/types").TransactionHash, "test"), ContractRevert,
+    );
+  });
+});

@@ -608,6 +608,11 @@ class CovenantMonitor(gl.Contract):
     test_total: u256
     breach_total: u256
     appeal_bonds: TreeMap[str, u256]
+    cure_deadlines: TreeMap[str, str]
+    restrictions: TreeMap[str, str]
+    facility_revisions: TreeMap[str, u256]
+    appeal_revisions: TreeMap[str, u256]
+    appeal_outcomes: TreeMap[str, str]
 
     def __init__(self, registry_address: str) -> None:
         self.owner = gl.message.sender_address
@@ -647,10 +652,24 @@ class CovenantMonitor(gl.Contract):
         Cross-contract reads happen before the non-deterministic block and
         cross-contract writes after it, because GenVM forbids them inside.
         """
+        key = finding_key(facility_id.strip(), covenant_index)
+        require(int(self.appeal_bonds.get(key, u256(0))) == 0,
+                "resolve the open appeal before ordinary retesting")
+        return self._test_covenant(facility_id.strip(), covenant_index, False)
+
+    def _test_covenant(self, facility_id: str, covenant_index: int, under_appeal: bool) -> dict:
         params = self._read_parameters(facility_id, covenant_index)
+        key = finding_key(facility_id, covenant_index)
+        if key in self.findings:
+            params["status"] = self.findings[key].status
+            params["cure_deadline"] = self.cure_deadlines.get(key, "")
         require(
             params["facility_status"] != FACILITY_CLOSED,
             "this facility is closed",
+        )
+        require(
+            bool(params.get("borrower_authorized", False)),
+            "covenant is not authorized by borrower",
         )
 
         now = block_now()
@@ -692,6 +711,14 @@ class CovenantMonitor(gl.Contract):
             configured=str(params["breach_consequence"]),
         )
 
+        if status == COVENANT_PENDING_CURE and not self.cure_deadlines.get(key, ""):
+            self.cure_deadlines[key] = shift_hours(now, int(params["cure_period_hours"]))
+        elif status in (COVENANT_COMPLIANT, COVENANT_CURED):
+            self.cure_deadlines[key] = ""
+        prior_restriction = self.restrictions.get(key, "")
+        if prior_restriction == CONSEQUENCE_ACCELERATION and not under_appeal:
+            consequence = CONSEQUENCE_ACCELERATION
+        self.restrictions[key] = consequence
         self._persist(facility_id, covenant_index, kind, now, reading, status,
                       threshold_bp, consequence)
         self._settle(facility_id, covenant_index, status, reading, consequence)
@@ -721,14 +748,19 @@ class CovenantMonitor(gl.Contract):
         acceleration stays recoverable. That mirrors how a real credit
         agreement handles a disputed breach notice.
         """
+        facility_id = facility_id.strip()
+        key = finding_key(facility_id, covenant_index)
+        require(key in self.findings, "there is no finding to appeal")
         params = self._read_parameters(facility_id, covenant_index)
+        params["status"] = self.findings[key].status
         facility = self._read_facility(facility_id)
         require(
             gl.message.sender_address == Address(str(facility["borrower"])),
             "only the borrower can appeal",
         )
         require(
-            str(params["status"]) in (COVENANT_PENDING_CURE, COVENANT_BREACHED),
+            str(params["status"]) in (COVENANT_PENDING_CURE, COVENANT_BREACHED) or
+            self.restrictions.get(key, "") == CONSEQUENCE_ACCELERATION,
             "there is no finding to appeal",
         )
         bond = int(gl.message.value)
@@ -737,8 +769,11 @@ class CovenantMonitor(gl.Contract):
         key = finding_key(facility_id, covenant_index)
         self.appeal_bonds[key] = u256(int(self.appeal_bonds.get(key, u256(0))) + bond)
 
-        gl.get_contract_at(self.registry).emit(on="accepted").record_appeal(
-            facility_id, int(covenant_index), APPEAL_OPEN, int(self.appeal_bonds[key])
+        revision = int(self.appeal_revisions.get(key, u256(0))) + 1
+        self.appeal_revisions[key] = u256(revision)
+        self.appeal_outcomes[key] = APPEAL_OPEN
+        gl.get_contract_at(self.registry).emit(on="finalized").record_appeal(
+            facility_id, int(covenant_index), APPEAL_OPEN, int(self.appeal_bonds[key]), revision
         )
         return {
             "facility_id": facility_id,
@@ -755,11 +790,12 @@ class CovenantMonitor(gl.Contract):
         bond. A retest that confirms it upholds the finding and the bond goes to
         the lender, which is what stops appeals being free.
         """
+        facility_id = facility_id.strip()
         key = finding_key(facility_id, covenant_index)
         bond = int(self.appeal_bonds.get(key, u256(0)))
         require(bond > 0, "no appeal is open on this covenant")
 
-        outcome = self.test_covenant(facility_id, covenant_index)
+        outcome = self._test_covenant(facility_id.strip(), covenant_index, True)
         facility = self._read_facility(facility_id)
         upheld = bool(outcome["breached"])
 
@@ -767,13 +803,17 @@ class CovenantMonitor(gl.Contract):
         recipient = Address(str(facility["lender"])) if upheld else Address(
             str(facility["borrower"])
         )
-        gl.get_contract_at(recipient).emit_transfer(value=u256(bond), on="accepted")
+        gl.get_contract_at(recipient).emit_transfer(value=u256(bond), on="finalized")
 
-        gl.get_contract_at(self.registry).emit(on="accepted").record_appeal(
+        revision = int(self.appeal_revisions.get(key, u256(0))) + 1
+        self.appeal_revisions[key] = u256(revision)
+        self.appeal_outcomes[key] = APPEAL_UPHELD if upheld else APPEAL_OVERTURNED
+        gl.get_contract_at(self.registry).emit(on="finalized").record_appeal(
             facility_id,
             int(covenant_index),
             APPEAL_UPHELD if upheld else APPEAL_OVERTURNED,
             0,
+            revision,
         )
         return {
             "facility_id": facility_id,
@@ -807,14 +847,19 @@ class CovenantMonitor(gl.Contract):
     # ------------------------------------------------------------ measuring
 
     def _measure_treasury(self, params: dict) -> dict:
-        rpc_url = str(params["treasury_rpc_url"])
-        account = str(params["treasury_address"])
+        rpc_url = str(params["treasury_rpc_url"]).strip()
+        account = str(params["treasury_address"]).strip()
         require(len(rpc_url) > 0 and len(account) > 0, "no treasury configured")
+        require(rpc_url in TREASURY_PROVIDERS,
+                "treasury RPC must be an approved Ethereum mainnet provider")
+        require(len(account) == 42 and account.startswith("0x") and
+                all(c in "0123456789abcdefABCDEF" for c in account[2:]),
+                "invalid treasury address format")
 
         threshold_atto = int(params["threshold_atto"])
         comparator = str(params["comparator"])
-        balance_text = read_chain_balance(rpc_url, account)
-        balance = int(balance_text)
+        evidence = read_authenticated_balance(account, block_now())
+        balance = int(evidence["balance"])
         breached = breaches(balance, threshold_atto, comparator)
         return {
             "breached": breached,
@@ -822,9 +867,9 @@ class CovenantMonitor(gl.Contract):
             "observed_atto": balance,
             "numerator_milli": 0,
             "denominator_milli": 0,
-            "citation": normalise_citation(f"{rpc_url}|eth_getBalance|{account}"),
-            "locator": "eth_getBalance",
-            "as_of": "",
+            "citation": normalise_citation(f"{TREASURY_PROVIDERS[0]}|{TREASURY_PROVIDERS[1]}|chain:1|{evidence['number']}|{evidence['hash']}"),
+            "locator": f"eth_getBalance({account}, {evidence['number']})",
+            "as_of": evidence["as_of"],
             "narrative": (
                 f"Treasury {account} holds {balance} against a floor of {threshold_atto}."
             ),
@@ -994,24 +1039,63 @@ class CovenantMonitor(gl.Contract):
         )
 
     def _settle(self, facility_id, covenant_index, status, reading, consequence) -> None:
-        registry = gl.get_contract_at(self.registry)
-        registry.emit(on="accepted").record_test_result(
-            facility_id,
-            int(covenant_index),
-            status,
-            int(max(0, int(reading["observed_bp"]))),
-            int(max(0, int(reading["observed_atto"]))),
-            str(reading["citation"])[:400],
+        key = finding_key(facility_id, covenant_index)
+        finding = self.findings[key]
+        revision = int(finding.sequence)
+        self.facility_revisions[facility_id] = u256(revision)
+        gl.get_contract_at(self.registry).emit(on="finalized").record_test_result(
+            facility_id, int(covenant_index), status,
+            int(finding.observed_bp), int(finding.observed_atto), finding.citation,
+            revision, finding.tested_at, self.cure_deadlines.get(key, ""),
         )
+        if self.vault != ZERO_ADDRESS:
+            state = self.get_enforcement_state(facility_id)
+            gl.get_contract_at(self.vault).emit(on="finalized").apply_enforcement(
+                facility_id, revision, state["restrictions"]
+            )
 
-        if self.vault == ZERO_ADDRESS:
-            return
+    @gl.public.write
+    def sync_enforcement(self, facility_id: str) -> None:
+        """Permissionless retry for failed/lost child messages; never moves bonds."""
+        key = facility_id.strip()
+        self._read_facility(key)
+        state = self.get_enforcement_state(key)
+        for i in range(len(self.finding_keys)):
+            fkey = self.finding_keys[i]
+            finding = self.findings[fkey]
+            if finding.facility_id != key:
+                continue
+            gl.get_contract_at(self.registry).emit(on="finalized").record_test_result(
+                key, int(finding.covenant_index), finding.status,
+                int(finding.observed_bp), int(finding.observed_atto), finding.citation,
+                int(finding.sequence), finding.tested_at, self.cure_deadlines.get(fkey, ""),
+            )
+            if fkey in self.appeal_outcomes:
+                gl.get_contract_at(self.registry).emit(on="finalized").record_appeal(
+                    key, int(finding.covenant_index), self.appeal_outcomes[fkey],
+                    int(self.appeal_bonds.get(fkey, u256(0))),
+                    int(self.appeal_revisions[fkey]),
+                )
+        if self.vault != ZERO_ADDRESS and state["revision"] > 0:
+            gl.get_contract_at(self.vault).emit(on="finalized").apply_enforcement(
+                key, state["revision"], state["restrictions"]
+            )
 
-        vault = gl.get_contract_at(self.vault)
-        if len(consequence) > 0:
-            vault.emit(on="accepted").enforce(facility_id, consequence)
-        elif status in (COVENANT_COMPLIANT, COVENANT_CURED):
-            vault.emit(on="accepted").release(facility_id)
+    @gl.public.view
+    def get_enforcement_state(self, facility_id: str) -> dict:
+        """Complete snapshot; delivery does not depend on registry message order."""
+        key = facility_id.strip()
+        restrictions = []
+        for i in range(len(self.finding_keys)):
+            fkey = self.finding_keys[i]
+            finding = self.findings[fkey]
+            consequence = self.restrictions.get(fkey, "")
+            if finding.facility_id == key and consequence:
+                restrictions.append({"covenant_index": int(finding.covenant_index),
+                                     "consequence": consequence})
+        return {"facility_id": key,
+                "revision": int(self.facility_revisions.get(key, u256(0))),
+                "restrictions": restrictions}
 
     def _finding_dict(self, finding: Finding) -> dict:
         return {
@@ -1080,33 +1164,97 @@ def consequence_for(status: str, configured: str) -> str:
     return ""
 
 
-def read_chain_balance(rpc_url: str, account: str) -> str:
-    """Read a native balance from another chain, exactly, under strict equality."""
-    payload = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "eth_getBalance",
-            "params": [account, "latest"],
-        }
-    ).encode("utf-8")
+# Independent operators are protocol trust anchors, never caller-selected URLs.
+# Treasury covenants currently support native ETH on Ethereum mainnet only.
+TREASURY_PROVIDERS = ("https://ethereum-rpc.publicnode.com", "https://eth.drpc.org")
 
-    def fetch() -> str:
-        response = gl.nondet.web.post(
-            rpc_url, body=payload, headers={"Content-Type": "application/json"}
-        )
-        status = int(getattr(response, "status", 0) or 0)
-        if 400 <= status < 500:
-            raise gl.vm.UserError(f"{ERROR_EXTERNAL} RPC returned {status}")
-        if status >= 500:
-            raise gl.vm.UserError(f"{ERROR_TRANSIENT} RPC returned {status}")
-        body = getattr(response, "body", None) or b""
-        document = json.loads(body.decode("utf-8", errors="replace"))
-        if "error" in document:
-            raise gl.vm.UserError(f"{ERROR_EXTERNAL} RPC error {document['error']}")
-        raw = str(document.get("result", "") or "")
-        if not raw.startswith("0x"):
-            raise gl.vm.UserError(f"{ERROR_EXTERNAL} RPC gave no balance")
-        return str(int(raw, 16))
 
-    return str(gl.eq_principle.strict_eq(fetch))
+def rpc_result(url: str, method: str, params: list):
+    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
+                          "params": params}).encode("utf-8")
+    response = gl.nondet.web.post(url, body=payload,
+                                  headers={"Content-Type": "application/json"})
+    status = int(getattr(response, "status", 0) or 0)
+    if status >= 500:
+        raise gl.vm.UserError(f"{ERROR_TRANSIENT} RPC returned {status}")
+    if status != 200:
+        raise gl.vm.UserError(f"{ERROR_EXTERNAL} RPC returned {status}")
+    try:
+        document = json.loads(response.body.decode("utf-8"))
+    except Exception:
+        raise gl.vm.UserError(f"{ERROR_EXTERNAL} malformed RPC JSON")
+    if (not isinstance(document, dict) or document.get("jsonrpc") != "2.0" or
+            type(document.get("id")) is not int or document["id"] != 1 or
+            "error" in document or "result" not in document):
+        raise gl.vm.UserError(f"{ERROR_EXTERNAL} invalid RPC envelope")
+    return document["result"]
+
+
+def rpc_quantity(raw) -> int:
+    if (not isinstance(raw, str) or not raw.startswith("0x") or len(raw) < 3 or
+            (len(raw) > 3 and raw[2] == "0") or
+            any(c not in "0123456789abcdef" for c in raw[2:])):
+        raise gl.vm.UserError(f"{ERROR_EXTERNAL} invalid RPC quantity")
+    value = int(raw, 16)
+    if value >= 2**256:
+        raise gl.vm.UserError(f"{ERROR_EXTERNAL} RPC quantity out of bounds")
+    return value
+
+
+def authenticated_at(account: str, number: str, now: str) -> dict:
+    results = []
+    pinned_number = rpc_quantity(number)
+    for url in TREASURY_PROVIDERS:
+        if rpc_quantity(rpc_result(url, "eth_chainId", [])) != 1:
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} treasury chain identity mismatch")
+        finalized = rpc_result(url, "eth_getBlockByNumber", ["finalized", False])
+        header = rpc_result(url, "eth_getBlockByNumber", [number, False])
+        if not isinstance(header, dict) or not isinstance(finalized, dict):
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} invalid treasury block header")
+        if rpc_quantity(finalized.get("number")) != pinned_number:
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} treasury block is not the current finalized head")
+        if rpc_quantity(header.get("number")) != pinned_number:
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} treasury block number mismatch")
+        block_hash = header.get("hash", "")
+        if (not isinstance(block_hash, str) or len(block_hash) != 66 or
+                not block_hash.startswith("0x") or
+                any(c not in "0123456789abcdef" for c in block_hash[2:])):
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} invalid treasury block hash")
+        if finalized.get("hash") != block_hash:
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} finalized treasury block hash mismatch")
+        timestamp = rpc_quantity(header.get("timestamp"))
+        age = int(parse_iso(now).timestamp()) - timestamp
+        if age < 0 or age > 86400:
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} stale or future treasury block")
+        # EIP-1898 anchors the balance to the independently matched block hash.
+        balance = rpc_quantity(rpc_result(url, "eth_getBalance", [account,
+            {"blockHash": block_hash, "requireCanonical": True}]))
+        results.append({"number": number, "hash": block_hash, "balance": str(balance),
+                        "as_of": format_iso(datetime.fromtimestamp(timestamp, timezone.utc))})
+    if results[0] != results[1]:
+        raise gl.vm.UserError(f"{ERROR_EXTERNAL} independent treasury providers disagree")
+    return results[0]
+
+
+def read_authenticated_balance(account: str, now: str) -> dict:
+    def leader():
+        header = rpc_result(TREASURY_PROVIDERS[0], "eth_getBlockByNumber", ["finalized", False])
+        if not isinstance(header, dict):
+            raise gl.vm.UserError(f"{ERROR_EXTERNAL} invalid treasury block header")
+        return authenticated_at(account, header.get("number"), now)
+
+    def validator(result) -> bool:
+        if not isinstance(result, gl.vm.Return):
+            leader_msg = getattr(result, "message", "")
+            try:
+                leader()
+                return False
+            except Exception as err:
+                return errors_agree(leader_msg, err)
+        try:
+            candidate = result.calldata
+            return authenticated_at(account, candidate["number"], now) == candidate
+        except Exception:
+            return False
+
+    return gl.vm.run_nondet_unsafe(leader, validator)

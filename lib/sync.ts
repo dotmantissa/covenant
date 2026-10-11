@@ -61,6 +61,7 @@ type RawChainCovenant = {
   breach_count: number;
   appeal_status: string;
   appeal_bond_atto: string;
+  borrower_authorized: boolean;
 };
 
 type RawChainPosition = {
@@ -208,7 +209,7 @@ export async function syncFacility(
         filingDeadlineDays: c.filing_deadline_days,
         breachConsequence: c.breach_consequence,
         sourceUrls: c.source_urls,
-        status: c.status,
+        status: c.borrower_authorized ? c.status : "pending_authorization",
         observedBp: c.observed_bp,
         observedAtto: c.observed_atto,
         evidenceRef: c.evidence_ref,
@@ -224,7 +225,7 @@ export async function syncFacility(
       .onConflictDoUpdate({
         target: [covenants.facilityId, covenants.covenantIndex],
         set: {
-          status: c.status,
+          status: c.borrower_authorized ? c.status : "pending_authorization",
           observedBp: c.observed_bp,
           observedAtto: c.observed_atto,
           evidenceRef: c.evidence_ref,

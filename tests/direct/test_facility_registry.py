@@ -247,7 +247,7 @@ def test_only_the_monitor_can_record_a_test_result(facility, direct_vm, direct_a
     registry = facility["registry"]
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("only the covenant monitor"):
-        registry.record_test_result(FACILITY_ID, COVENANT_RATIO, "compliant", 13000, 0, "x")
+        record_result(registry, FACILITY_ID, COVENANT_RATIO, "compliant", 13000, 0, "x")
 
 
 def test_recording_a_result_advances_the_schedule(facility, direct_vm, as_address):
@@ -255,7 +255,7 @@ def test_recording_a_result_advances_the_schedule(facility, direct_vm, as_addres
     monitor_address = registry.get_wiring()["monitor"]
     direct_vm.sender = as_address(monitor_address)
 
-    registry.record_test_result(
+    record_result(registry,
         FACILITY_ID, COVENANT_RATIO, "compliant", 13120, 0, "dashboards.example.org/harbour/revenue"
     )
     covenant = registry.get_covenant(FACILITY_ID, COVENANT_RATIO)
@@ -272,13 +272,13 @@ def test_a_cure_window_opens_once_and_is_not_reset_by_a_retest(facility, direct_
     monitor_address = registry.get_wiring()["monitor"]
     direct_vm.sender = as_address(monitor_address)
 
-    registry.record_test_result(FACILITY_ID, COVENANT_RATIO, "breach_pending_cure", 11000, 0, "a")
+    record_result(registry, FACILITY_ID, COVENANT_RATIO, "breach_pending_cure", 11000, 0, "a")
     first = registry.get_covenant(FACILITY_ID, COVENANT_RATIO)
     assert first["cure_deadline"] != ""
     assert first["breach_count"] == 1
 
     direct_vm.warp("2026-10-07T00:00:00Z")
-    registry.record_test_result(FACILITY_ID, COVENANT_RATIO, "breach_pending_cure", 10900, 0, "b")
+    record_result(registry, FACILITY_ID, COVENANT_RATIO, "breach_pending_cure", 10900, 0, "b")
     second = registry.get_covenant(FACILITY_ID, COVENANT_RATIO)
 
     # A borrower must not be able to buy themselves a fresh window by asking
@@ -292,8 +292,8 @@ def test_a_clean_test_clears_the_cure_window(facility, direct_vm, as_address):
     monitor_address = registry.get_wiring()["monitor"]
     direct_vm.sender = as_address(monitor_address)
 
-    registry.record_test_result(FACILITY_ID, COVENANT_RATIO, "breach_pending_cure", 11000, 0, "a")
-    registry.record_test_result(FACILITY_ID, COVENANT_RATIO, "cured", 12400, 0, "b")
+    record_result(registry, FACILITY_ID, COVENANT_RATIO, "breach_pending_cure", 11000, 0, "a")
+    record_result(registry, FACILITY_ID, COVENANT_RATIO, "cured", 12400, 0, "b")
 
     covenant = registry.get_covenant(FACILITY_ID, COVENANT_RATIO)
     assert covenant["status"] == "cured"
@@ -310,7 +310,7 @@ def test_a_tested_covenant_drops_out_of_the_due_list(facility, direct_vm, as_add
     registry = facility["registry"]
     monitor_address = registry.get_wiring()["monitor"]
     direct_vm.sender = as_address(monitor_address)
-    registry.record_test_result(FACILITY_ID, COVENANT_TREASURY, "compliant", 0, 700_000 * GEN, "rpc")
+    record_result(registry, FACILITY_ID, COVENANT_TREASURY, "compliant", 0, 700_000 * GEN, "rpc")
 
     due = registry.due_covenants()
     assert COVENANT_TREASURY not in {item["covenant_index"] for item in due}
@@ -321,9 +321,9 @@ def test_the_portfolio_summary_counts_every_covenant_state(facility, direct_vm, 
     registry = facility["registry"]
     monitor_address = registry.get_wiring()["monitor"]
     direct_vm.sender = as_address(monitor_address)
-    registry.record_test_result(FACILITY_ID, 0, "compliant", 13000, 0, "a")
-    registry.record_test_result(FACILITY_ID, 1, "breach_pending_cure", 60, 0, "b")
-    registry.record_test_result(FACILITY_ID, 2, "breached", 0, 0, "c")
+    record_result(registry, FACILITY_ID, 0, "compliant", 13000, 0, "a")
+    record_result(registry, FACILITY_ID, 1, "breach_pending_cure", 60, 0, "b")
+    record_result(registry, FACILITY_ID, 2, "breached", 0, 0, "c")
 
     summary = registry.portfolio_summary()
     assert summary["facilities"] == 1
@@ -343,3 +343,8 @@ def test_reading_a_covenant_that_is_not_there_is_an_error(facility, direct_vm):
 def test_reading_a_facility_that_is_not_there_is_an_error(registry, direct_vm):
     with direct_vm.expect_revert("no facility called ghost"):
         registry.get_facility("ghost")
+
+
+def record_result(registry, facility_id, covenant_index, *args):
+    revision = registry.get_covenant(facility_id, covenant_index)["test_count"] + 1
+    return registry.record_test_result(facility_id, covenant_index, *args, revision)

@@ -364,7 +364,7 @@ def test_a_treasury_above_the_floor_is_compliant(facility, direct_vm):
 
     assert outcome["status"] == "compliant"
     assert outcome["observed_atto"] == str(700_000 * GEN)
-    assert outcome["citation"].startswith("rpc.example.org")
+    assert outcome["citation"].startswith("ethereum-rpc.publicnode.com")
 
 
 def test_a_treasury_below_the_floor_stops_draws(funded, direct_vm):
@@ -380,7 +380,7 @@ def test_a_treasury_below_the_floor_stops_draws(funded, direct_vm):
 
 def test_an_rpc_error_is_surfaced_rather_than_guessed_at(facility, direct_vm):
     mock_rpc_error(direct_vm, TREASURY_RPC)
-    with direct_vm.expect_revert("RPC error"):
+    with direct_vm.expect_revert("invalid RPC envelope"):
         facility["monitor"].test_covenant(FACILITY_ID, COVENANT_TREASURY)
 
 

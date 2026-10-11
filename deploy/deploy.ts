@@ -17,6 +17,7 @@
  * wiring setters are idempotent, so a crashed run is resumed by running it
  * again.
  */
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -183,8 +184,7 @@ function assertExecuted(label: string, receipt: GenLayerTransaction): void {
 async function main(): Promise<void> {
   const env = readEnvFile(ENV_FILE);
   const networkAlias = required(env, "GENLAYER_NETWORK");
-  const accountName = required(env, "GENLAYER_DEPLOYER_ACCOUNT");
-  const password = required(env, "COVENANT_KEYSTORE_PASSWORD");
+  const suppliedKey = process.env.GENLAYER_DEPLOYER_PRIVATE_KEY ?? env.get("GENLAYER_DEPLOYER_PRIVATE_KEY");
 
   const chain = (chains as Record<string, unknown>)[networkAlias];
   if (!chain) {
@@ -193,31 +193,24 @@ async function main(): Promise<void> {
     );
   }
 
-  // The CLI keystore is a standard web3 encrypted JSON, so ethers can open it.
-  // This machine has no OS keychain, so `genlayer account unlock` is not an
-  // option and the key is decrypted here instead, in memory only.
-  const keystorePath = join(
-    process.env.HOME ?? "",
-    ".genlayer",
-    "keystores",
-    `${accountName}.json`,
-  );
-  if (!existsSync(keystorePath)) {
-    throw new Error(`no keystore for account ${accountName} at ${keystorePath}`);
+  let privateKey = suppliedKey;
+  if (!privateKey) {
+    const accountName = required(env, "GENLAYER_DEPLOYER_ACCOUNT");
+    const password = required(env, "COVENANT_KEYSTORE_PASSWORD");
+    const keystorePath = join(process.env.HOME ?? "", ".genlayer", "keystores", `${accountName}.json`);
+    if (!existsSync(keystorePath)) throw new Error(`no keystore for account ${accountName}`);
+    privateKey = (await Wallet.fromEncryptedJson(readFileSync(keystorePath, "utf8"), password)).privateKey;
   }
-  const wallet = await Wallet.fromEncryptedJson(
-    readFileSync(keystorePath, "utf8"),
-    password,
-  );
-  const account = createAccount(wallet.privateKey as `0x${string}`);
+  const account = createAccount(privateKey as `0x${string}`);
 
   const client = createClient({ chain: chain as never, account });
   console.log(`network  ${networkAlias}`);
   console.log(`deployer ${account.address}\n`);
 
-  const addresses: Partial<Record<ContractKey, string>> = existsSync(ADDRESS_FILE)
-    ? JSON.parse(readFileSync(ADDRESS_FILE, "utf8")).contracts ?? {}
-    : {};
+  const previous = existsSync(ADDRESS_FILE) && !process.argv.includes("--fresh")
+    ? JSON.parse(readFileSync(ADDRESS_FILE, "utf8")) : {};
+  const addresses: Partial<Record<ContractKey, string>> = previous.contracts ?? {};
+  const sourceHashes: Partial<Record<ContractKey, string>> = previous.sourceHashes ?? {};
 
   /** Persists after every deploy so a crash never loses a deployed address. */
   function persist(): void {
@@ -231,6 +224,7 @@ async function main(): Promise<void> {
           deployer: account.address,
           deployedAt: new Date().toISOString(),
           contracts: addresses,
+          sourceHashes,
         },
         null,
         2,
@@ -239,13 +233,17 @@ async function main(): Promise<void> {
   }
 
   async function deploy(key: ContractKey, args: unknown[]): Promise<string> {
+    const code = readFileSync(join(ROOT, SOURCES[key]), "utf8");
+    const digest = createHash("sha256").update(code).digest("hex");
     const existing = addresses[key];
     if (existing) {
+      if (sourceHashes[key] !== digest) {
+        throw new Error(`${key}: stored deployment differs from current source. Run npm run deploy:contracts -- --fresh to deploy the complete new stack.`);
+      }
       console.log(`${key}: already at ${existing}, skipping deploy`);
       return existing;
     }
     console.log(`${key}: deploying`);
-    const code = readFileSync(join(ROOT, SOURCES[key]), "utf8");
     const hash = await withRetry(`${key} deploy`, () =>
       client.deployContract({ code, args: args as never[] }),
     );
@@ -267,6 +265,7 @@ async function main(): Promise<void> {
       throw new Error(`${key}: no contract address on receipt ${hash}`);
     }
     addresses[key] = address;
+    sourceHashes[key] = digest;
     persist();
     console.log(`    ${key} -> ${address}\n`);
     return address;

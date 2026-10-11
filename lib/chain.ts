@@ -229,7 +229,28 @@ export async function sendWrite(
     }),
   );
   assertExecuted(label, receipt);
+  await waitForEmittedTransactions(client, hash as TransactionHash, label);
 
   const leader = receipt.consensus_data?.leader_receipt?.[0];
   return { hash: hash as TransactionHash, receipt, returned: leader?.result };
+}
+
+
+/** A finalized parent may have independently failing settlement children. */
+export async function waitForEmittedTransactions(
+  client: Client, hash: TransactionHash, label: string, seen = new Set<string>(),
+): Promise<void> {
+  if (seen.has(hash)) return;
+  seen.add(hash);
+  const children = await withRetry(`${label} emitted messages`, () =>
+    client.getTriggeredTransactionIds({ hash }),
+  );
+  for (const child of children) {
+    const receipt = await withRetry(`${label} child receipt`, () =>
+      client.waitForTransactionReceipt({ hash: child, status: "FINALIZED" as never,
+        interval: 5000, retries: 120 }),
+    );
+    assertExecuted(`${label} settlement ${child}`, receipt);
+    await waitForEmittedTransactions(client, child, label, seen);
+  }
 }

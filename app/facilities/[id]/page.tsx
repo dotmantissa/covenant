@@ -100,7 +100,7 @@ export default function FacilityConsolePage({
 
   // Modals state
   const [modalType, setModalType] = useState<
-    "commit" | "draw" | "repay" | "withdraw" | "add_covenant" | "appeal" | null
+    "commit" | "draw" | "repay" | "withdraw" | "withdraw-interest" | "add_covenant" | "appeal" | null
   >(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -182,6 +182,18 @@ export default function FacilityConsolePage({
       setActionError(err instanceof Error ? err.message : `Failed to execute ${modalType}`);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleApproveCovenant = async (index: number) => {
+    try {
+      const token = await getAccessToken();
+      await apiFetch(`/api/facilities/${encodeURIComponent(facilityId)}/covenants/${index}/approve`,
+        { method: "POST" }, token);
+      setActionSuccess(`Covenant #${index} approved. Its displayed terms are now enforceable.`);
+      await loadData(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve covenant");
     }
   };
 
@@ -418,6 +430,11 @@ export default function FacilityConsolePage({
               >
                 Withdraw Free
               </button>
+              <button type="button"
+                onClick={() => { setModalType("withdraw-interest"); setActionAmountGen("0"); }}
+                className="px-3 py-1.5 rounded border border-[var(--rule)] text-[var(--ink)] text-xs cursor-pointer">
+                Withdraw Earned Interest
+              </button>
             </div>
           )}
         </div>
@@ -628,6 +645,7 @@ export default function FacilityConsolePage({
                           <div className="flex items-center justify-end gap-2">
                             <button
                               type="button"
+                              disabled={c.status === "pending_authorization" || hasAppeal}
                               onClick={() => void handleTestCovenant(c.covenantIndex)}
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[var(--rule)] hover:bg-[var(--paper-2)] text-[var(--ink)] text-[11px] font-medium transition-colors cursor-pointer"
                               title="Trigger consensus test on chain"
@@ -636,6 +654,13 @@ export default function FacilityConsolePage({
                               <span>Test</span>
                             </button>
 
+                            {c.status === "pending_authorization" && authenticated && (
+                              <button type="button" onClick={() => void handleApproveCovenant(c.covenantIndex)}
+                                className="px-2.5 py-1 rounded border border-[var(--rule)] text-[11px] cursor-pointer"
+                                title="Only the borrower can accept these exact covenant terms">
+                                Approve Terms
+                              </button>
+                            )}
                             {isOffside && !hasAppeal && authenticated && (
                               <button
                                 type="button"
@@ -722,7 +747,7 @@ export default function FacilityConsolePage({
           <div className="max-w-md w-full rounded border border-[var(--rule)] bg-[var(--paper)] p-6 space-y-4 shadow-xl">
             <div className="flex items-center justify-between pb-2 ledger-rule">
               <h2 className="font-serif text-lg font-semibold text-[var(--ink)] capitalize">
-                {modalType} Capital
+                {modalType === "withdraw-interest" ? "Withdraw Earned Interest" : `${modalType} Capital`}
               </h2>
               <button
                 type="button"
@@ -742,7 +767,7 @@ export default function FacilityConsolePage({
             <form onSubmit={handleCapitalAction} className="space-y-4 text-xs">
               <div className="space-y-1">
                 <label className="font-mono text-[11px] text-[var(--ink-2)]">
-                  Amount in GEN *
+                  {modalType === "withdraw-interest" ? "Amount in GEN (0 withdraws all collected interest)" : "Amount in GEN *"}
                 </label>
                 <input
                   type="number"

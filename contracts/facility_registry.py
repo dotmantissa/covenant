@@ -149,6 +149,7 @@ class Covenant:
     breach_count: u256
     appeal_status: str
     appeal_bond_atto: u256
+    borrower_authorized: bool
 
 
 @allow_storage
@@ -179,6 +180,9 @@ class FacilityRegistry(gl.Contract):
     facility_count: u256
     lender_index: TreeMap[str, DynArray[str]]
     borrower_index: TreeMap[str, DynArray[str]]
+    test_revisions: TreeMap[str, u256]
+    appeal_revisions: TreeMap[str, u256]
+    enforcement_revisions: TreeMap[str, u256]
 
     def __init__(self) -> None:
         self.owner = gl.message.sender_address
@@ -340,9 +344,19 @@ class FacilityRegistry(gl.Contract):
                 breach_count=u256(0),
                 appeal_status=APPEAL_NONE,
                 appeal_bond_atto=u256(0),
+                borrower_authorized=False,
             )
         )
         return len(facility.covenants) - 1
+
+    @gl.public.write
+    def approve_covenant(self, facility_id: str, covenant_index: int) -> None:
+        """Accept this immutable covenant's exact terms, including its sources."""
+        facility = self._facility(facility_id)
+        require(gl.message.sender_address == facility.borrower,
+                "only the borrower can approve a covenant")
+        require(facility.status != FACILITY_CLOSED, "this facility is closed")
+        self._covenant(facility, covenant_index).borrower_authorized = True
 
     # ----------------------------------------------------------- monitor API
 
@@ -355,6 +369,9 @@ class FacilityRegistry(gl.Contract):
         observed_bp: int,
         observed_atto: int,
         evidence_ref: str,
+        revision: int,
+        tested_at: str = "",
+        cure_deadline: str = "",
     ) -> None:
         require(
             self.monitor != ZERO_ADDRESS and gl.message.sender_address == self.monitor,
@@ -365,7 +382,14 @@ class FacilityRegistry(gl.Contract):
         facility = self._facility(facility_id)
         covenant = self._covenant(facility, covenant_index)
 
-        now = block_now()
+        key = f"{facility.facility_id}#{int(covenant_index)}"
+        require(covenant.borrower_authorized, "covenant is not authorized by borrower")
+        require(revision > 0, "settlement requires a revision")
+        if revision > 0:
+            if revision <= int(self.test_revisions.get(key, u256(0))):
+                return
+            self.test_revisions[key] = u256(revision)
+        now = tested_at if tested_at else block_now()
         covenant.status = status
         covenant.observed_bp = u256(int(observed_bp))
         covenant.observed_atto = u256(int(observed_atto))
@@ -378,7 +402,7 @@ class FacilityRegistry(gl.Contract):
             # Opening a fresh cure window. An already running window is left
             # alone so a borrower cannot reset the clock by triggering a retest.
             if len(covenant.cure_deadline) == 0:
-                covenant.cure_deadline = shift_hours(now, int(covenant.cure_period_hours))
+                covenant.cure_deadline = cure_deadline or shift_hours(now, int(covenant.cure_period_hours))
                 covenant.breach_count = u256(int(covenant.breach_count) + 1)
         elif status == COVENANT_BREACHED:
             if len(covenant.cure_deadline) == 0:
@@ -393,6 +417,7 @@ class FacilityRegistry(gl.Contract):
         covenant_index: int,
         appeal_status: str,
         bond_atto: int,
+        revision: int,
     ) -> None:
         require(
             self.monitor != ZERO_ADDRESS and gl.message.sender_address == self.monitor,
@@ -400,16 +425,30 @@ class FacilityRegistry(gl.Contract):
         )
         facility = self._facility(facility_id)
         covenant = self._covenant(facility, covenant_index)
+        require(appeal_status in (APPEAL_OPEN, APPEAL_UPHELD, APPEAL_OVERTURNED),
+                "unknown appeal status")
+        key = f"{facility.facility_id}#{int(covenant_index)}"
+        require(revision > 0, "settlement requires a revision")
+        if revision > 0:
+            if revision <= int(self.appeal_revisions.get(key, u256(0))):
+                return
+            self.appeal_revisions[key] = u256(revision)
         covenant.appeal_status = appeal_status
         covenant.appeal_bond_atto = u256(int(bond_atto))
 
     @gl.public.write
-    def set_facility_status(self, facility_id: str, status: str) -> None:
+    def set_facility_status(self, facility_id: str, status: str, revision: int) -> None:
         sender = gl.message.sender_address
-        allowed = sender == self.monitor or sender == self.vault
-        require(allowed, "only the monitor or the vault can move a facility")
+        allowed = self.vault != ZERO_ADDRESS and sender == self.vault
+        require(allowed, "only the vault can move a facility")
         require(status in VALID_FACILITY_STATUSES, f"unknown facility status {status}")
-        self._facility(facility_id).status = status
+        facility = self._facility(facility_id)
+        require(revision > 0, "settlement requires a revision")
+        if revision > 0:
+            if revision <= int(self.enforcement_revisions.get(facility.facility_id, u256(0))):
+                return
+            self.enforcement_revisions[facility.facility_id] = u256(revision)
+        facility.status = status
 
     # ----------------------------------------------------------------- reads
 
@@ -473,6 +512,7 @@ class FacilityRegistry(gl.Contract):
             "source_urls": [covenant.source_urls[i] for i in range(len(covenant.source_urls))],
             "status": covenant.status,
             "cure_deadline": covenant.cure_deadline,
+            "borrower_authorized": bool(covenant.borrower_authorized),
         }
 
     @gl.public.view
@@ -507,7 +547,7 @@ class FacilityRegistry(gl.Contract):
                 continue
             for index in range(len(facility.covenants)):
                 covenant = facility.covenants[index]
-                if covenant.status == COVENANT_BREACHED:
+                if not covenant.borrower_authorized or covenant.status == COVENANT_BREACHED:
                     continue
                 if len(covenant.next_due_at) == 0 or covenant.next_due_at <= now:
                     due.append(
@@ -596,4 +636,5 @@ class FacilityRegistry(gl.Contract):
             "breach_count": int(covenant.breach_count),
             "appeal_status": covenant.appeal_status,
             "appeal_bond_atto": str(int(covenant.appeal_bond_atto)),
+            "borrower_authorized": bool(covenant.borrower_authorized),
         }

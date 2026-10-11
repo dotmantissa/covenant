@@ -23,10 +23,11 @@ The protocol separates agreement state, consensus monitoring, and capital custod
 - Maintains the covenant schedule for each facility across four supported kinds:
   - Ratio covenants: debt to equity, current ratio, interest coverage.
   - Filing covenants: 10-Q/10-K filing timeliness relative to quarter end.
-  - Treasury covenants: on-chain reserve floors checked via RPC.
+  - Treasury covenants: native ETH reserve floors authenticated against fixed PublicNode and dRPC providers on Ethereum mainnet at their current finalized block hash.
   - Prose covenants: qualitative operational promises evaluated by validator consensus.
 - Enforces cure windows and tracks appeal bond status.
 - Holds indices by party for quick retrieval of facilities where an address is lender or borrower.
+- Every covenant is drafted inactive. Only its borrower can call `approve_covenant(facility_id, index)` to accept the immutable text, thresholds, remedies, and sources before testing or enforcement.
 
 ### 2. CovenantMonitor (`contracts/covenant_monitor.py`)
 - Independent evaluator callable by any party or automated worker on schedule.
@@ -34,13 +35,16 @@ The protocol separates agreement state, consensus monitoring, and capital custod
   - An LLM extracts named figures from public web endpoints.
   - Exact ratio math and comparison against threshold basis points run in a deterministic sandbox (`gl.vm.spawn_sandbox`).
   - Validators judge whether extraction accurately reflects the source and whether arithmetic matches.
-- Treasury covenants execute on-chain balance checks with strict equality.
+- Treasury validators independently verify chain identity, current finalized block number/hash, and EIP-1898 balance through both approved operators. Caller-selected endpoints, disagreements, malformed quantities, and stale evidence fail closed.
 - Records a complete evidence audit trail for every test: source URL, extracted figures, sandbox calculation, consensus verdict, and timestamp.
 - Handles borrower appeals backed by a dispute bond.
 
 ### 3. CreditVault (`contracts/credit_vault.py`)
 - Holds lender deposits and manages borrower drawdowns, repayments, and accrued interest.
 - Authority to enforce consequences belongs exclusively to the wired monitor.
+- Covenant-specific restrictions are aggregated from complete versioned snapshots. Reordered or replayed delivery cannot overwrite newer settlement, and a compliant covenant cannot remove another covenant’s restriction.
+- Repayments pay interest then principal; excess returns to the original payer. Lenders can call `withdraw_interest` for collected interest separately from undrawn capital.
+- Successful appeals remove only the disputed covenant’s restriction, reversing acceleration while preserving other restrictions and outstanding debt.
 - Enforces three distinct breach consequences:
   - `draw_stop`: locks the facility against further borrowing while allowing repayment.
   - `rate_step_up`: increases the borrowing rate by the facility step-up basis points.
@@ -50,9 +54,9 @@ The protocol separates agreement state, consensus monitoring, and capital custod
 
 All three contracts are deployed and wired together on GenLayer Studionet (Chain ID 61999):
 
-- FacilityRegistry: `0x535b9510E7946D1106D27766359a136847eB6eFc`
-- CovenantMonitor: `0x4273F7e4CFF3B1cd6069F7ED5f4cb7493889E9aE`
-- CreditVault: `0x80Aa7EfAec29239d38a318293339473FbD2B0855`
+- FacilityRegistry: `0xC384bE0556c26dD54c1b2c5B182Ac20A846f88eE`
+- CovenantMonitor: `0x6b3aD61180782562963d9CAC9F659B090fdD7A7c`
+- CreditVault: `0x40e637C87fa0B7E671ecD3e47b9beD7318E12865`
 
 Wiring verification is confirmed on-chain by reading `get_wiring()` across all three contracts.
 
@@ -96,9 +100,9 @@ Required variables:
 - `PRIVY_APP_SECRET`: Privy application secret
 - `SIGNER_MASTER_SECRET`: 64-character hex secret for HKDF key derivation
 - `NEXT_PUBLIC_STUDIONET_RPC_URL`: `https://studio.genlayer.com/api`
-- `NEXT_PUBLIC_FACILITY_REGISTRY_ADDRESS`: `0x535b9510E7946D1106D27766359a136847eB6eFc`
-- `NEXT_PUBLIC_COVENANT_MONITOR_ADDRESS`: `0x4273F7e4CFF3B1cd6069F7ED5f4cb7493889E9aE`
-- `NEXT_PUBLIC_CREDIT_VAULT_ADDRESS`: `0x80Aa7EfAec29239d38a318293339473FbD2B0855`
+- `NEXT_PUBLIC_FACILITY_REGISTRY_ADDRESS`: `0xC384bE0556c26dD54c1b2c5B182Ac20A846f88eE`
+- `NEXT_PUBLIC_COVENANT_MONITOR_ADDRESS`: `0x6b3aD61180782562963d9CAC9F659B090fdD7A7c`
+- `NEXT_PUBLIC_CREDIT_VAULT_ADDRESS`: `0x40e637C87fa0B7E671ecD3e47b9beD7318E12865`
 
 4. Push the schema to Postgres:
 ```bash
@@ -158,3 +162,53 @@ npm run lint
 npm run typecheck
 npm run build
 ```
+
+## Reviewer remediation and reproducible evidence
+
+The corrected contracts use finalized messages for enforcement, registry updates,
+bond payouts, drawdowns, surplus refunds and withdrawals. Each receiving contract
+rejects stale revisions. The monitor owns the cure clock and restrictions, avoiding
+a dependency on asynchronously updated registry records. The application waits for
+the emitted transaction tree to finalize and succeed before reporting settlement.
+If a child write fails, anyone can call `CovenantMonitor.sync_enforcement(facility_id)`;
+it retries the latest snapshot without paying a bond twice.
+
+The root `TASKS.md` is a local, Git-ignored recovery checklist. Validation commands:
+
+```bash
+python3 -m pytest tests/direct -q
+for contract in contracts/*.py; do genvm-lint check "$contract"; done
+ruff check contracts tests
+npm run typecheck
+npm run test:node
+npm run lint
+npm run build
+```
+
+The live lifecycle runner records each submitted transaction before waiting and
+resumes it by hash after interruption. It checks full consensus execution, child
+transactions, native balance deltas, interest withdrawal, surplus recovery,
+acceleration with outstanding principal, borrower consent, appeal bond refund,
+restored draw rights, and final lender recovery. It uses Studionet's test faucet
+for native value; gasless transaction submission alone does not fund repayments.
+
+```bash
+# REVIEW_KEY_FILE names a secure ignored file containing
+# GENLAYER_DEPLOYER_PRIVATE_KEY and REVIEW_BORROWER_PRIVATE_KEY.
+python3 tests/integration/review_lifecycle.py deploy
+python3 tests/integration/review_lifecycle.py economics
+python3 tests/integration/review_lifecycle.py breach
+# Publish the correcting disclosure, then independently retest under appeal:
+python3 tests/integration/review_lifecycle.py resolve
+python3 -m pytest tests/integration -v -s
+```
+
+See [review evidence](evidence/REVIEW.md) and
+[public transaction receipts](evidence/studionet-review.json). The disclosed debt
+and correction are explicitly controlled test evidence, with Git history showing
+the source used for each consensus decision.
+
+`npm run deploy:contracts -- --fresh` deploys a fresh stack. Otherwise the deployer
+requires stored source hashes to match and refuses to silently reuse outdated
+code. Update hosting environment addresses from `deploy/addresses.json` after
+redeployment. Older immutable deployments retain their original code and addresses.

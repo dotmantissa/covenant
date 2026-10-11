@@ -12,9 +12,7 @@ from conftest import (
     COVENANT_TREASURY,
     FACILITY_ID,
     GEN,
-    REVENUE_URL,
     TREASURY_RPC,
-    mock_page,
     mock_rpc_balance,
 )
 from test_covenant_monitor import healthy_ratio, lean_ratio
@@ -24,7 +22,6 @@ def test_only_borrower_can_appeal(facility, direct_vm):
     monitor = facility["monitor"]
     wiring = facility["wiring"]
     lender = facility["lender"]
-    borrower = facility["borrower"]
 
     # 1. Trip covenant into breach_pending_cure
     lean_ratio(direct_vm)

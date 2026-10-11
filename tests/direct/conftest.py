@@ -100,6 +100,7 @@ class Wiring:
         self.stack = []
         self.transfers = []
         self.deferred = []
+        self.messages = []
 
     # ------------------------------------------------------------ bookkeeping
 
@@ -115,7 +116,8 @@ class Wiring:
 
     def debit(self, address, amount: int) -> None:
         key = _as_bytes(address)
-        self.vm._balances[key] = max(0, self.vm._balances.get(key, 0) - int(amount))
+        assert self.vm._balances.get(key, 0) >= int(amount), "message overspent balance"
+        self.vm._balances[key] = self.vm._balances.get(key, 0) - int(amount)
 
     @contextmanager
     def executing(self, address, sender=None, value=None):
@@ -212,6 +214,7 @@ class Wiring:
 
         if "PostMessage" in request:
             spec = request["PostMessage"]
+            self.messages.append(dict(spec))
             target = _as_bytes(spec["address"])
             value = int(spec.get("value", 0) or 0)
             payload = spec.get("calldata") or {}
@@ -306,6 +309,7 @@ def deploy(direct_vm, direct_deploy, wiring):
 
         contract = direct_deploy(path, *args)
         _install_sandbox_shim()
+        _install_rpc_shim(direct_vm)
 
         from genlayer.py.types import Address
 
@@ -397,7 +401,8 @@ def mock_rpc(direct_vm, rpc_pattern: str, payload):
 
 
 def mock_rpc_balance(direct_vm, rpc_pattern: str, balance_atto: int):
-    mock_rpc(direct_vm, rpc_pattern, {"jsonrpc": "2.0", "id": 1, "result": hex(balance_atto)})
+    for url in (rpc_pattern, SECONDARY_RPC):
+        mock_rpc(direct_vm, url, {"jsonrpc": "2.0", "id": 1, "result": hex(balance_atto)})
 
 
 def mock_rpc_error(direct_vm, rpc_pattern: str, code: int = -32000, message: str = "nope"):
@@ -411,7 +416,8 @@ def mock_rpc_error(direct_vm, rpc_pattern: str, code: int = -32000, message: str
 # ----------------------------------------------------------- sample facility
 
 FACILITY_ID = "harbour-revolver-01"
-TREASURY_RPC = "https://rpc.example.org/mainnet"
+TREASURY_RPC = "https://ethereum-rpc.publicnode.com"
+SECONDARY_RPC = "https://eth.drpc.org"
 TREASURY_ACCOUNT = "0x" + "a7" * 20
 REVENUE_URL = "https://dashboards.example.org/harbour/revenue"
 REPORTS_URL = "https://harbour.example.org/transparency"
@@ -552,6 +558,9 @@ def facility(stack, direct_vm, direct_alice, direct_bob):
     registry = stack["registry"]
     open_facility(registry, direct_vm, direct_alice, direct_bob)
     draft_covenants(registry, direct_vm, direct_alice)
+    direct_vm.sender = direct_bob
+    for index in range(4):
+        registry.approve_covenant(FACILITY_ID, index)
     return {
         **stack,
         "facility_id": FACILITY_ID,
@@ -565,3 +574,45 @@ def funded(facility, direct_vm):
     """The same facility with the lender's capital committed to the vault."""
     commit_capital(facility, direct_vm, facility["lender"], PRINCIPAL)
     return facility
+
+
+def _install_rpc_shim(vm):
+    """Body-aware Direct Mode RPC mocks; the runner matches only URL/method.
+
+    Production authentication code still executes, including both providers and
+    all envelope, chain, finalized block and hash checks. Tests may override
+    individual method results using vm._rpc_overrides[(url, method)].
+    """
+    from types import SimpleNamespace
+    from datetime import datetime
+    import genlayer.gl as gl
+    web = gl.nondet.web
+    if not hasattr(web, "_covenant_original_post"):
+        web._covenant_original_post = web.post
+    original = web._covenant_original_post
+
+    def post(url, *, body, headers=None, **kwargs):
+        payload = json.loads(body)
+        method = payload["method"]
+        override = getattr(vm, "_rpc_overrides", {}).get((url, method))
+        if override is not None:
+            document = override(payload) if callable(override) else override
+            return SimpleNamespace(status=200, body=json.dumps(document).encode())
+        mock = vm._match_web_mock(url, "POST")
+        if mock is None or method == "eth_getBalance":
+            return original(url, body=body, headers=headers, **kwargs)
+        text = mock.get("body", "")
+        if isinstance(text, bytes):
+            text = text.decode()
+        doc = json.loads(text)
+        if "error" in doc:
+            return SimpleNamespace(status=200, body=json.dumps(doc).encode())
+        if method == "eth_chainId":
+            result = "0x1"
+        else:
+            timestamp = int(datetime.fromisoformat(str(vm._datetime).replace("Z", "+00:00")).timestamp()) - 900
+            result = {"number": "0x100", "hash": "0x" + "ab" * 32,
+                      "timestamp": hex(timestamp)}
+        return SimpleNamespace(status=200, body=json.dumps({"jsonrpc": "2.0", "id": 1,
+                                                           "result": result}).encode())
+    web.post = post

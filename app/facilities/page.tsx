@@ -505,13 +505,13 @@ export default function FacilitiesPage() {
 
               <div className="space-y-1">
                 <label className="font-mono text-[11px] text-[var(--ink-2)]">
-                  Optional Treasury RPC URL
+                  Treasury RPC (Ethereum mainnet, optional)
                 </label>
                 <input
                   type="text"
                   value={draftTreasuryRpc}
                   onChange={(e) => setDraftTreasuryRpc(e.target.value)}
-                  placeholder="https://..."
+                  placeholder="https://ethereum-rpc.publicnode.com"
                   className="w-full px-3 py-2 rounded bg-[var(--paper-2)] border border-[var(--rule)] text-[var(--ink)] font-mono focus:outline-hidden focus:border-[var(--ink)]"
                 />
               </div>

@@ -137,7 +137,7 @@ export const covenants = pgTable(
     breachConsequence: text("breach_consequence").notNull(),
     sourceUrls: jsonb("source_urls").$type<string[]>().notNull().default([]),
 
-    /** untested | compliant | breach_pending_cure | breached | cured */
+    /** pending_authorization | untested | compliant | breach_pending_cure | breached | cured */
     status: text("status").notNull().default("untested"),
     observedBp: integer("observed_bp").notNull().default(0),
     observedAtto: atto("observed_atto").notNull().default("0"),
