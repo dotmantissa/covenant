@@ -15,7 +15,7 @@
  *    submitted once to avoid re-signing a possibly accepted value transfer.
  */
 import "@/lib/net";
-import { createAccount, createClient } from "genlayer-js";
+import { abi, createAccount, createClient } from "genlayer-js";
 import * as chains from "genlayer-js/chains";
 import {
   executionResultNumberToName,
@@ -61,9 +61,18 @@ export function readClient(): Client {
  * lives only as long as the request. Nothing is cached, because caching a
  * client would mean caching a key.
  */
-export function clientFor(privyDid: string): Client {
+export function clientFor(privyDid: string, beforeBroadcast?: (signed: `0x${string}`) => Promise<void>): Client {
   const { privateKey } = deriveAccount(privyDid);
-  return createClient({ chain: chain(), account: createAccount(privateKey) });
+  const account = createAccount(privateKey);
+  if (beforeBroadcast) {
+    const sign = account.signTransaction;
+    account.signTransaction = (async (...args: Parameters<typeof sign>) => {
+      const signed = await sign(...args);
+      await beforeBroadcast(signed);
+      return signed;
+    }) as typeof sign;
+  }
+  return createClient({ chain: chain(), account });
 }
 
 // ------------------------------------------------------------------ retries
@@ -240,7 +249,7 @@ export async function sendWrite(
   await waitForEmittedTransactions(client, hash as TransactionHash, label);
 
   const leader = receipt.consensus_data?.leader_receipt?.[0];
-  return { hash: hash as TransactionHash, receipt, returned: leader?.result };
+  return { hash: hash as TransactionHash, receipt, returned: decodeContractResult(leader?.result) };
 }
 
 
@@ -285,3 +294,40 @@ export async function waitForEmittedTransactions(
     await waitForEmittedTransactions(client, child, label, seen);
   }
 }
+
+/** Decode the actual return envelope, including Studio's base64 raw field. */
+export function decodeContractResult(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !("raw" in value) || typeof value.raw !== "string") return value;
+  const encoded = Buffer.from(value.raw, "base64");
+  if (encoded[0] !== 0) throw new Error("contract result is not a successful return envelope");
+  const decoded = abi.calldata.decode(encoded.subarray(1));
+  return JSON.parse(JSON.stringify(decoded, (_key, v) => v instanceof Map ? Object.fromEntries(v) : typeof v === "bigint" ? (v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER) ? Number(v) : v.toString()) : v));
+}
+
+/** Bounded observation; polling is driven by durable intents instead of HTTP sleeps. */
+export async function inspectSettlement(client: Client, hash: TransactionHash, label: string): Promise<GenLayerTransaction | null> {
+  const root = await client.getTransaction({ hash });
+  if (nameOf(root.statusName, root.status, transactionsStatusNumberToName) !== "FINALIZED") return null;
+  try { assertExecuted(label, root); }
+  catch(error) { throw error instanceof ContractRevert ? error : new ContractRevert(error instanceof Error ? error.message : "Finalized execution failed",label); }
+  const queue: { hash: TransactionHash; parent: string }[] = [];
+  for (const child of await client.getTriggeredTransactionIds({hash})) queue.push({hash:child,parent:hash});
+  const seen = new Set<string>();
+  while (queue.length) {
+    if (seen.size >= 100) throw new Error("settlement graph exceeds the bounded observer limit");
+    const item = queue.shift()!;
+    if (seen.has(item.hash)) continue;
+    seen.add(item.hash);
+    const receipt = await client.getTransaction({ hash:item.hash });
+    if (nameOf(receipt.statusName, receipt.status, transactionsStatusNumberToName) !== "FINALIZED") return null;
+    const settlement = !receipt.consensus_data
+      ? await client.request({method:"eth_getTransactionByHash",params:[item.hash]}) as unknown as GenLayerTransaction
+      : receipt;
+    try { assertSettlementChild(`${label} settlement ${item.hash}`,settlement,item.parent); }
+    catch(error) { throw new SettlementFailure(error instanceof Error?error.message:"Settlement failed"); }
+    for (const child of await client.getTriggeredTransactionIds({hash:item.hash})) queue.push({hash:child,parent:item.hash});
+  }
+  return root;
+}
+
+export class SettlementFailure extends Error {}

@@ -1,8 +1,9 @@
-import { attoInput } from "@/lib/amounts";
+import { attoInput, integerInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
-import { clientFor, addresses, sendWrite } from "@/lib/chain";
-import { syncFacility } from "@/lib/sync";
+import { addresses } from "@/lib/chain";
+import { submitIntent } from "@/lib/transactions";
+export const maxDuration=60;
 
 type RouteParams = {
   params: Promise<{ id: string }>;
@@ -40,43 +41,11 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    const client = clientFor(actor.privyDid);
-    const addrs = addresses();
-
-    const writeResult = await sendWrite(
-      client,
-      "add_covenant",
-      addrs.facilityRegistry,
-      "add_covenant",
-      [
-        facilityId,
-        String(text).trim(),
-        String(kind).trim(),
-        String(metric).trim(),
-        String(numeratorLabel).trim(),
-        String(denominatorLabel).trim(),
-        Number(thresholdBp),
-        attoInput(thresholdAtto, true),
-        String(comparator).trim(),
-        Number(testFrequencyHours),
-        Number(curePeriodHours),
-        Number(filingDeadlineDays),
-        String(breachConsequence).trim(),
-        Array.isArray(sourceUrls) ? sourceUrls : [String(sourceUrls)],
-      ],
-    );
-
-    // Sync from chain to Neon read cache
-    const synced = await syncFacility(facilityId);
-
-    return jsonResponse(
-      {
-        covenants: synced.covenants,
-        txHash: writeResult.hash,
-        covenantIndex: writeResult.returned,
-      },
-      201,
-    );
+    return jsonResponse(await submitIntent({request,actor,facilityId,address:addresses().facilityRegistry,method:"add_covenant",args:[
+      facilityId,String(text).trim(),String(kind).trim(),String(metric).trim(),String(numeratorLabel).trim(),String(denominatorLabel).trim(),
+      integerInput(thresholdBp,"Threshold"),attoInput(thresholdAtto,true),String(comparator),
+      integerInput(testFrequencyHours,"Frequency",1,8760),integerInput(curePeriodHours,"Cure period",0,8760),integerInput(filingDeadlineDays,"Filing deadline",0,366),
+      String(breachConsequence),Array.isArray(sourceUrls)?sourceUrls:[]]}),202);
   } catch (error) {
     return handleRouteError(error);
   }

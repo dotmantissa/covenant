@@ -1,44 +1,14 @@
-import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
-import { clientFor, addresses, sendWrite } from "@/lib/chain";
-import { syncFacility } from "@/lib/sync";
-
-type RouteParams = {
-  params: Promise<{ id: string }>;
-};
-
-export async function POST(request: Request, { params }: RouteParams) {
+import { addresses } from "@/lib/chain";
+import { submitIntent } from "@/lib/transactions";
+import { attoInput } from "@/lib/amounts";
+export const maxDuration=60;
+export async function POST(request:Request,{params}:{params:Promise<{id:string}>}) {
   try {
-    const actor = await requireActor(request);
-    const { id: facilityId } = await params;
-    const body = await request.json();
-
-    const { amountAtto } = body;
-    if (!amountAtto || attoInput(amountAtto) <= 0n) {
-      return jsonResponse({ error: "amountAtto must be greater than zero" }, 400);
-    }
-
-    const client = clientFor(actor.privyDid);
-    const addrs = addresses();
-
-    const writeResult = await sendWrite(
-      client,
-      "withdraw_free_capital",
-      addrs.creditVault,
-      "withdraw_free_capital",
-      [facilityId, attoInput(amountAtto)],
-    );
-
-    const synced = await syncFacility(facilityId);
-
-    return jsonResponse({
-      facility: synced.facility,
-      position: synced.position,
-      txHash: writeResult.hash,
-      returned: writeResult.returned,
-    });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+    const actor=await requireActor(request);const {id}=await params;const body=await request.json();
+    const amount=attoInput(body.amountAtto);
+    return jsonResponse(await submitIntent({request,actor,facilityId:id,address:addresses().creditVault,method:"withdraw_free_capital",
+      args:[id,amount]}),202);
+  } catch(error){return handleRouteError(error);}
 }

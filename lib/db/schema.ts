@@ -295,3 +295,21 @@ export type Covenant = typeof covenants.$inferSelect;
 export type CovenantTest = typeof covenantTests.$inferSelect;
 export type Alert = typeof alerts.$inferSelect;
 export type Sweep = typeof sweeps.$inferSelect;
+
+/** Signed bytes are persisted before broadcast; never exposed through public API. */
+export const transactionIntents = deployment.table("transaction_intents", {
+  id: text("id").primaryKey(), actorDid: text("actor_did").notNull(),
+  requestKey: text("request_key").notNull(), fingerprint: text("fingerprint").notNull(),
+  facilityId: text("facility_id").notNull(), label: text("label").notNull(),
+  address: text("address").notNull(), status: text("status").notNull().default("preparing"),
+  signedTransaction: text("signed_transaction"), broadcastHash: text("broadcast_hash"), txHash: text("tx_hash"),
+  returned: jsonb("returned"), error: text("error"),
+  payload: jsonb("payload").$type<{args:unknown[];value:string}>().notNull(),
+  createdAt: timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
+}, table => [unique("transaction_intents_actor_key").on(table.actorDid,table.requestKey)]);
+export const operationLocks = deployment.table("operation_locks", {
+  key: text("key").primaryKey(), holder: text("holder").notNull(),
+  expiresAt: timestamp("expires_at",{withTimezone:true}).notNull(),
+});
+export type TransactionIntent = typeof transactionIntents.$inferSelect;

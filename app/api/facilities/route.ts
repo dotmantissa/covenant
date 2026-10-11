@@ -1,9 +1,11 @@
+import { submitIntent } from "@/lib/transactions";
+import { integerInput } from "@/lib/amounts";
 import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { actorsByAddress, optionalActor, requireActor, userByEmail } from "@/lib/auth";
-import { clientFor, addresses, sendWrite } from "@/lib/chain";
+import { addresses } from "@/lib/chain";
 import { covenants, db, facilities, positions } from "@/lib/db";
-import { currentFacilityIds, syncFacility } from "@/lib/sync";
+import { currentFacilityIds } from "@/lib/sync";
 import { desc, eq, or, sql } from "drizzle-orm";
 
 export async function GET(request: Request) {
@@ -128,40 +130,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const client = clientFor(actor.privyDid);
-    const addrs = addresses();
-
-    const writeResult = await sendWrite(
-      client,
-      "create_facility",
-      addrs.facilityRegistry,
-      "create_facility",
-      [
-        String(facilityId).trim(),
-        String(finalBorrowerAddress).trim(),
-        String(borrowerName).trim(),
-        String(purpose).trim(),
-        attoInput(principalAtto),
-        Number(rateBp),
-        Number(stepUpBp),
-        String(treasuryRpcUrl).trim(),
-        String(treasuryAddress).trim(),
-        String(governanceUrl).trim(),
-      ],
-    );
-
-    // Sync from chain to Neon read model
-    const synced = await syncFacility(String(facilityId).trim(), writeResult.hash);
-
-    return jsonResponse(
-      {
-        facility: synced.facility,
-        position: synced.position,
-        covenants: synced.covenants,
-        txHash: writeResult.hash,
-      },
-      201,
-    );
+    return jsonResponse(await submitIntent({request,actor,facilityId:String(facilityId).trim(),
+      address:addresses().facilityRegistry,method:"create_facility",args:[
+        String(facilityId).trim(),String(finalBorrowerAddress).trim(),String(borrowerName).trim(),String(purpose).trim(),
+        attoInput(principalAtto),integerInput(rateBp,"Rate",1,100000),integerInput(stepUpBp,"Step up",0,100000),
+        String(treasuryRpcUrl).trim(),String(treasuryAddress).trim(),String(governanceUrl).trim()]}),202);
   } catch (error) {
     return handleRouteError(error);
   }

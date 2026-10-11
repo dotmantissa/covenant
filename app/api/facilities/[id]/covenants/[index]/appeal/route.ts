@@ -1,59 +1,13 @@
-import { attoInput } from "@/lib/amounts";
 import { handleRouteError, jsonResponse } from "@/lib/api";
 import { requireActor } from "@/lib/auth";
-import { clientFor, addresses, sendWrite } from "@/lib/chain";
-import { alerts, db } from "@/lib/db";
-import { syncFacility } from "@/lib/sync";
-
-type RouteParams = {
-  params: Promise<{ id: string; index: string }>;
-};
-
-export async function POST(request: Request, { params }: RouteParams) {
+import { addresses } from "@/lib/chain";
+import { submitIntent } from "@/lib/transactions";
+import { integerInput, attoInput } from "@/lib/amounts";
+export const maxDuration=60;
+export async function POST(request:Request,{params}:{params:Promise<{id:string;index:string}>}) {
   try {
-    const actor = await requireActor(request);
-    const { id: facilityId, index: indexStr } = await params;
-    const covenantIndex = parseInt(indexStr, 10);
-    const body = await request.json();
-
-    const { bondAtto } = body;
-    if (!bondAtto || attoInput(bondAtto) <= 0n) {
-      return jsonResponse({ error: "bondAtto must be greater than zero" }, 400);
-    }
-
-    const client = clientFor(actor.privyDid);
-    const addrs = addresses();
-
-    const writeResult = await sendWrite(
-      client,
-      "appeal_breach",
-      addrs.covenantMonitor,
-      "appeal_breach",
-      [facilityId, covenantIndex],
-      attoInput(bondAtto),
-    );
-
-    // Sync from chain
-    const synced = await syncFacility(facilityId);
-
-    // Create alert for appeal opened
-    await db().insert(alerts).values({
-      facilityId,
-      covenantIndex,
-      kind: "appeal",
-      severity: "warning",
-      title: `Appeal opened for Covenant #${covenantIndex}`,
-      body: `Borrower posted ${bondAtto} bond to dispute the finding.`,
-      audience: "both",
-    });
-
-    return jsonResponse({
-      facility: synced.facility,
-      covenants: synced.covenants,
-      txHash: writeResult.hash,
-      returned: writeResult.returned,
-    });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+    const actor=await requireActor(request);const {id,index}=await params;const covenantIndex=integerInput(index,"Covenant index");
+    const body=await request.json();const amount=attoInput(body.bondAtto);
+    return jsonResponse(await submitIntent({request,actor,facilityId:id,address:addresses().covenantMonitor,method:"appeal_breach",args:[id,covenantIndex],value:amount}),202);
+  } catch(error){return handleRouteError(error);}
 }

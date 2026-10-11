@@ -1,3 +1,4 @@
+import { waitForIntent, type PendingIntent } from "@/lib/client-transactions";
 /**
  * Client-side fetch helper that attaches Privy auth tokens and unwraps API responses.
  */
@@ -19,6 +20,14 @@ export async function apiFetch<T>(
     headers.set("Content-Type", "application/json");
   }
 
+  const isWrite=(options.method??"GET").toUpperCase()==="POST" && url.startsWith("/api/facilities");
+  const storageKey=`covenant:request:${url}:${typeof options.body==='string'?options.body:''}`;
+  if(isWrite && !headers.has("Idempotency-Key")) {
+    const key=typeof window!=="undefined"?localStorage.getItem(storageKey):null;
+    const requestKey=key??crypto.randomUUID();
+    headers.set("Idempotency-Key",requestKey);
+    if(typeof window!=="undefined")localStorage.setItem(storageKey,requestKey);
+  }
   const res = await fetch(url, { ...options, headers });
   const data = await res.json().catch(() => ({}));
 
@@ -28,5 +37,10 @@ export async function apiFetch<T>(
     throw new Error(errorMsg);
   }
 
+  if(isWrite && 'intentId' in data) {
+    const result=await waitForIntent<T>(data as PendingIntent,token);
+    if(typeof window!=="undefined")localStorage.removeItem(storageKey);
+    return result;
+  }
   return data as T;
 }
