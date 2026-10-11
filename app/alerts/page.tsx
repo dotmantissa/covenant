@@ -66,7 +66,7 @@ export default function AlertsPage() {
         prev.map((a) => (a.id === alertId ? { ...a, readAt: new Date().toISOString() } : a)),
       );
     } catch (err) {
-      console.error("Failed to dismiss alert:", err);
+      setError(err instanceof Error?err.message:"Failed to dismiss alert");
     }
   };
 

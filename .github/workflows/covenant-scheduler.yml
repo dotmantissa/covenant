@@ -1,0 +1,22 @@
+name: Covenant monitoring
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: covenant-production-monitoring
+  cancel-in-progress: false
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resume settlement or submit a due covenant
+        env:
+          CRON_SECRET: ${{ secrets.COVENANT_CRON_SECRET }}
+          SWEEP_URL: https://covenant-facilities.vercel.app/api/sweep
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --max-time 75 --request POST \
+            --header "Authorization: Bearer $CRON_SECRET" "$SWEEP_URL"

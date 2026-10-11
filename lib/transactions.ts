@@ -58,7 +58,7 @@ async function replaySigned(row: TransactionIntent): Promise<string> {
   throw new Error("Consensus transaction id has not been indexed yet");
 }
 
-export async function submitIntent(input: { request:Request; actor:Actor; facilityId:string;
+export async function submitIntent(input: { request:Request; actor:Pick<Actor,"privyDid"|"address">; facilityId:string;
   address:`0x${string}`; method:string; args:unknown[]; value?:bigint }) {
   await ensureDatabase();
   const key=input.request.headers.get("Idempotency-Key");

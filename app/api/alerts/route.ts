@@ -1,98 +1,35 @@
-import { handleRouteError, jsonResponse } from "@/lib/api";
-import { optionalActor, requireActor } from "@/lib/auth";
-import { alerts, db, facilities } from "@/lib/db";
-import { desc, eq, or, sql } from "drizzle-orm";
+import { handleRouteError,jsonResponse } from "@/lib/api";
+import { optionalActor,requireActor } from "@/lib/auth";
+import { alerts,alertReads,db,facilities } from "@/lib/db";
+import { desc,eq,inArray } from "drizzle-orm";
+import { integerInput } from "@/lib/amounts";
+import { receivesAlert } from "@/lib/alert-access";
 
-export async function GET(request: Request) {
+export async function GET(request:Request) {
   try {
-    const actor = await optionalActor(request);
-    const addr = actor ? actor.address.toLowerCase() : "";
-    const url = new URL(request.url);
-    const unreadOnly = url.searchParams.get("unread") === "true";
-
-    let facilityIds: string[] = [];
-
-    if (addr) {
-      // Find facilities belonging to this actor
-      const userFacilities = await db()
-        .select({ facilityId: facilities.facilityId })
-        .from(facilities)
-        .where(
-          or(
-            eq(sql`lower(${facilities.lenderAddress})`, addr),
-            eq(sql`lower(${facilities.borrowerAddress})`, addr),
-          ),
-        );
-      facilityIds = userFacilities.map((f) => f.facilityId);
-    } else {
-      // Unauthenticated: show alerts across all active facilities
-      const allFacilities = await db()
-        .select({ facilityId: facilities.facilityId })
-        .from(facilities);
-      facilityIds = allFacilities.map((f) => f.facilityId);
-    }
-
-    let query = db()
-      .select()
-      .from(alerts)
-      .where(sql`${alerts.facilityId} in (${sql.join(
-        facilityIds.map((id) => sql`${id}`),
-        sql`, `,
-      )})`);
-
-    if (unreadOnly) {
-      query = db()
-        .select()
-        .from(alerts)
-        .where(
-          sql`${alerts.readAt} is null and ${alerts.facilityId} in (${sql.join(
-            facilityIds.map((id) => sql`${id}`),
-            sql`, `,
-          )})`,
-        );
-    }
-
-    const rows = await query.orderBy(desc(alerts.createdAt)).limit(50);
-
-    return jsonResponse({ alerts: rows });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+    const actor=await optionalActor(request);const allFacilities=await db().select().from(facilities);
+    const visibleFacilities=actor?allFacilities.filter(f=>[f.lenderAddress,f.borrowerAddress].some(a=>a.toLowerCase()===actor.address.toLowerCase())):allFacilities;
+    if(!visibleFacilities.length)return jsonResponse({alerts:[]});
+    const byId=new Map(visibleFacilities.map(f=>[f.facilityId,f]));
+    const rows=await db().select().from(alerts).where(inArray(alerts.facilityId,[...byId.keys()])).orderBy(desc(alerts.createdAt)).limit(100);
+    const reads=actor?await db().select().from(alertReads).where(eq(alertReads.actorDid,actor.privyDid)):[];
+    const readTimes=new Map(reads.map(r=>[r.alertId,r.readAt]));const unread=new URL(request.url).searchParams.get('unread')==='true';
+    return jsonResponse({alerts:rows.filter(a=>!actor||receivesAlert(actor.address,byId.get(a.facilityId)!,a.audience))
+      .map(a=>({...a,readAt:readTimes.get(a.id)??null})).filter(a=>!unread||!a.readAt).slice(0,50)});
+  }catch(error){return handleRouteError(error);}
 }
-
-export async function POST(request: Request) {
+export async function POST(request:Request) {
   try {
-    await requireActor(request);
-    const body = await request.json();
-    const { alertId, markAll = false, facilityId } = body;
-
-    if (markAll) {
-      if (facilityId) {
-        await db()
-          .update(alerts)
-          .set({ readAt: new Date() })
-          .where(sql`${alerts.facilityId} = ${facilityId} and ${alerts.readAt} is null`);
-      } else {
-        await db()
-          .update(alerts)
-          .set({ readAt: new Date() })
-          .where(sql`${alerts.readAt} is null`);
-      }
-      return jsonResponse({ success: true, all: true });
-    }
-
-    if (!alertId) {
-      return jsonResponse({ error: "alertId is required" }, 400);
-    }
-
-    const [updated] = await db()
-      .update(alerts)
-      .set({ readAt: new Date() })
-      .where(eq(alerts.id, Number(alertId)))
-      .returning();
-
-    return jsonResponse({ alert: updated });
-  } catch (error) {
-    return handleRouteError(error);
-  }
+    const actor=await requireActor(request);const body=await request.json();
+    const own=(await db().select().from(facilities)).filter(f=>[f.lenderAddress,f.borrowerAddress].some(a=>a.toLowerCase()===actor.address.toLowerCase()));
+    const byId=new Map(own.map(f=>[f.facilityId,f]));
+    if(body.facilityId && !byId.has(body.facilityId))return jsonResponse({error:'Facility access denied.'},403);
+    if(!own.length)return jsonResponse({error:'Alert access denied.'},403);
+    const rows=await db().select().from(alerts).where(inArray(alerts.facilityId,body.facilityId?[body.facilityId]:[...byId.keys()]));
+    const alertId=body.markAll===true?null:integerInput(body.alertId,'Alert id',1);
+    const selected=rows.filter(a=>(alertId===null||a.id===alertId)&&receivesAlert(actor.address,byId.get(a.facilityId)!,a.audience));
+    if(alertId!==null && !selected.length)return jsonResponse({error:'Alert access denied.'},403);
+    if(selected.length)await db().insert(alertReads).values(selected.map(a=>({alertId:a.id,actorDid:actor.privyDid}))).onConflictDoNothing();
+    return jsonResponse({success:true,readCount:selected.length});
+  }catch(error){return handleRouteError(error);}
 }

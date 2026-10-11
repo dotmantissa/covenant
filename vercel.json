@@ -1,0 +1,1 @@
+{"crons":[{"path":"/api/sweep?scheduled=true","schedule":"17 3 * * *"}]}

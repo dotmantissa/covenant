@@ -282,7 +282,7 @@ export const sweeps = deployment.table("sweeps", {
 export type SweepDetail = {
   facilityId: string;
   covenantIndex: number;
-  outcome: "tested" | "failed" | "skipped";
+  outcome: "tested" | "failed" | "skipped" | "pending";
   status?: string;
   txHash?: string;
   message?: string;
@@ -313,3 +313,8 @@ export const operationLocks = deployment.table("operation_locks", {
   expiresAt: timestamp("expires_at",{withTimezone:true}).notNull(),
 });
 export type TransactionIntent = typeof transactionIntents.$inferSelect;
+
+export const alertReads = deployment.table("alert_reads", {
+  alertId:integer("alert_id").notNull().references(()=>alerts.id,{onDelete:"cascade"}),
+  actorDid:text("actor_did").notNull(),readAt:timestamp("read_at",{withTimezone:true}).notNull().defaultNow(),
+}, table=>[unique("alert_reads_recipient_key").on(table.alertId,table.actorDid)]);

@@ -50,9 +50,10 @@ async function main(): Promise<void> {
   console.log(`Watch mode active: running sweep every ${INTERVAL_SECONDS} seconds`);
   await executePass();
 
-  setInterval(() => {
-    void executePass();
-  }, INTERVAL_SECONDS * 1000);
+  while(true) {
+    await new Promise(resolve=>setTimeout(resolve,INTERVAL_SECONDS*1000));
+    await executePass();
+  }
 }
 
 void main();
